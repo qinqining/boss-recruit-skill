@@ -147,7 +147,11 @@ async def search_talent(pages=2):
         await browser.close()
 
 if __name__ == "__main__":
-    pages = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 2
+    pages = 2
+    if len(sys.argv) > 1 and sys.argv[1].isdigit():
+        pages = int(sys.argv[1])
+    elif len(sys.argv) > 2 and sys.argv[2].isdigit():
+        pages = int(sys.argv[2])
     talents = asyncio.run(search_talent(pages))
     print(f"\n===JSON_START===")
     print(json.dumps(talents, ensure_ascii=False, indent=2))

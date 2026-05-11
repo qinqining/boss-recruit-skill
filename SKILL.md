@@ -72,15 +72,29 @@ python scripts/search_talent.py
 - 设置筛选：学历本科、求职意向（离职随时到岗/在职考虑机会/在职月内到岗）
 - 遍历牛人列表
 
-### 步骤3：打招呼前筛选
+### 步骤3：打招呼前筛选（命令行 / CLI）
+
+在技能根目录 `boss-recruit` 下执行：
 
 ```bash
-python scripts/greet.py --top 10
+# 推荐：统一 CLI（不写参数则默认本轮最多成功打招呼 20 人，不匹配则跳过继续扫）
+python boss greet
+
+# 自定义上限：例如只要 10 个
+python boss greet --top 10
+
+# 或直接跑脚本（等价）；也可用 BOSS_GREET_TOP=30 改默认
+python scripts/greet.py
+
+# 不写 txt 报告（仅控制台 + llm_audit_log.jsonl）
+python scripts/greet.py --no-report
+# 或环境变量：BOSS_GREET_NO_REPORT=1
 ```
 
-- 读取每个牛人的在线简历
-- Agent 判断是否含 SEO/Google 关键词
-- 匹配的发送打招呼
+- 读取每个牛人的在线简历，**规则引擎**判定是否匹配（见脚本内 `RULE_*` 常量）
+- 匹配则按间隔打招呼；脚本会在 **iframe 推荐列表内滚动**、拉末卡入屏以尝试加载更多，直到凑满 `top` 或连续若干次滚动后卡片数仍不增加（`BOSS_GREET_LIST_SCROLL_STALL`，默认 5）
+- 每条判定写入 **`reports/greet_rule_report_run序号_YYYYMMDD_HHMMSS.txt`**（UTF-8）；文首/文末含 **报告日期** 与 **第 N 次运行**（序号在 `reports/greet_run_index.json`）
+- 审计 JSONL 仍为根目录 `llm_audit_log.jsonl`
 
 ### 步骤4：消息监控 + 智能回复
 
@@ -144,11 +158,11 @@ Agent 分析候选人回复：
 # 登录
 python scripts/login.py
 
-# 搜索牛人 + 筛选
-python scripts/search_talent.py --pages 2
+# 搜索牛人 + 筛选（页数）
+python boss search 2
 
-# 打招呼前筛选 + 发送
-python scripts/greet.py --top 10
+# 打招呼前筛选 + 发送（默认凑满 20 个匹配）
+python scripts/greet.py
 
 # 消息监控 + 智能回复
 python scripts/chat_auto.py --interval 30

@@ -24,11 +24,14 @@ pip install "camoufox[geoip]" && camoufox fetch
 # 登录
 python scripts/login.py
 
-# 搜索牛人
-python scripts/search_talent.py --pages 2
+# 搜索牛人（页数：默认 2）
+python boss search 2
 
-# 打招呼前筛选（核心功能）
-python scripts/greet.py --top 10
+# 打招呼前筛选（核心功能）：规则判定 + 自动打招呼；默认凑满 20 个匹配项即停；报告 → reports/
+python boss greet
+
+# 自定义人数上限：python boss greet --top 30
+# 等价：python scripts/greet.py [--no-report]；默认可由 BOSS_GREET_TOP 覆盖
 
 # 消息监控 + 智能回复
 python scripts/chat_auto.py --interval 30
@@ -43,7 +46,7 @@ python scripts/run_pipeline.py --keywords SEO --top 5
 
 1. **确认需求** — 关键词（SEO/Google等）、数量、是否自动回复
 2. **登录** — `python scripts/login.py`（首次需要扫码）
-3. **搜索筛选** — `python scripts/greet.py --top N`
+3. **搜索筛选** — `python boss greet`（默认最多成功打招呼 20；可选 `--top N`；报告见 `reports/`）
 4. **展示结果** — 列出已打招呼的牛人
 5. **监控回复** — `python scripts/chat_auto.py`（可选）
 

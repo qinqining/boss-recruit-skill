@@ -1,0 +1,27 @@
+# 运行报告（含简历摘要，勿入库）
+reports/*.txt
+
+# Camoufox / Firefox 持久化配置目录（缓存、cookie、storage，体积大且机绑）
+recruit_profile/
+
+# 本地状态与密钥
+.env
+*.local.json
+
+# 候选人去重 / 审计日志（可选本地化数据）
+seen_candidates.json
+llm_audit_log.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+.venv/
+*.egg-info/
+.eggs/
+
+# 编辑器与系统
+.DS_Store
+Thumbs.db
