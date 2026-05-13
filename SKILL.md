@@ -37,6 +37,7 @@ Pattern: 扫码登录 → 筛选牛人 → 简历内容分析 → 打招呼 → 
 - **素质表（Markdown）**：`面试方案生成任务/岗位素质项/01_岗位与JD门槛.md`、`02_素质分档与面试母题.md`
 - **候选人**：默认 `面试方案生成任务/候选人简历/`；**BOSS 下载多为 PDF**，Agent 宜先 `py scripts/pdf_resume_to_md.py xxx.pdf` 生成同名 `.md` 再阅读（`pip install pymupdf`）；扫描件需 OCR
 - **输出**：`面试方案生成任务/输出/` 下**必须**含带日期的 **`面试方案_*.docx`**（正式交付）；可先写同名 `.md` 再运行 `py scripts/interview_plan_md_to_docx.py …md` 生成 Word（需 `pip install python-docx`）
+- **问题设计约束**：统筹规划不作为主要考察素质项（助理岗位侧重执行配合）；问题应多围绕候选人 **SEO 相关工作经历**（关键词研究、内容优化、数据监控、技术 SEO 等），避免跨行业类比（如用学生会、土建施工经历代替 SEO 经历提问）
 
 ## Core Pattern
 
