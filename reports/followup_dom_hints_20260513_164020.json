@@ -1,0 +1,61 @@
+{
+  "exported_at": "2026-05-13T16:40:20",
+  "page_url": "https://www.zhipin.com/web/chat/index",
+  "frames": [
+    {
+      "frame_url": "https://www.zhipin.com/web/chat/index",
+      "hints": {
+        "textareas": [],
+        "contenteditables": [
+          {
+            "tag": "DIV",
+            "id": "boss-chat-editor-input",
+            "cls": "boss-chat-editor-input",
+            "ph": "",
+            "role": "",
+            "ce": "true",
+            "name": "",
+            "type": "",
+            "r": {
+              "top": 823,
+              "left": 812,
+              "width": 810,
+              "height": 126,
+              "bottom": 949
+            }
+          }
+        ],
+        "labeledButtons": [],
+        "listRoots": [
+          {
+            "tag": "DIV",
+            "id": "",
+            "cls": "user-list b-scroll-stable",
+            "ph": "",
+            "role": "",
+            "ce": "",
+            "name": "",
+            "type": "",
+            "r": {
+              "top": 196,
+              "left": 452,
+              "width": 359,
+              "height": 779,
+              "bottom": 975
+            },
+            "childCount": 4
+          }
+        ]
+      }
+    },
+    {
+      "frame_url": "about:srcdoc",
+      "hints": {
+        "textareas": [],
+        "contenteditables": [],
+        "labeledButtons": [],
+        "listRoots": []
+      }
+    }
+  ]
+}

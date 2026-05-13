@@ -2,6 +2,8 @@
 Boss Recruit - 扫码登录
 使用 Camoufox 打开登录页，用户扫码后保存 cookies
 
+测试用保持窗口：py scripts/login_keep_open.py
+
 Cookie 与指纹绑定:
   开启 persistent_context=True + 固定 user_data_dir + 固定 seed，
   实现扫码一次永久免登
@@ -38,8 +40,11 @@ def get_profile_dir():
     profile_dir.mkdir(parents=True, exist_ok=True)
     return profile_dir
 
-def login():
-    """打开登录页，用户扫码后保存 cookies（sync API）"""
+def login(keep_open: bool = False):
+    """打开登录页，用户扫码后保存 cookies（sync API）。
+
+    keep_open: 登录成功并写入 cookie 文件后仍保持浏览器窗口，按 Enter 再关闭（便于手工验证页面）。
+    """
     print("[LOGIN] Opening BOSS login page...")
 
     # 预生成固定指纹
@@ -118,6 +123,14 @@ def login():
 
         print(f"[OK] Cookies saved: {auth_file}")
         print(f"[OK] Seed: {FIXED_SEED}, Profile: {get_profile_dir()}")
+        if keep_open:
+            print(
+                "[TEST] 已保存 Cookie；窗口将保持打开。确认页面无误后在本窗口按 Enter 关闭浏览器…"
+            )
+            try:
+                input()
+            except EOFError:
+                time.sleep(120)
         return True
 
     except Exception as e:

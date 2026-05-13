@@ -10,6 +10,8 @@
 - 列表分区：可选 `BOSS_FOLLOWUP_LIST_TAB=沟通中` 或 `新招呼`；默认不切换（留在「全部」），避免误点导致列表为空。
 - 调试：`py scripts/chat_followup.py -v --dry-run` 或设 `BOSS_FOLLOWUP_VERBOSE=1`。
 - 留窗：`--dry-run` 或 `-v` 时默认会「按 Enter 再关浏览器」；正式无人值守请加 `--no-keep-open`。
+- 导出 DOM 线索（无需 F12）：`py scripts/chat_followup.py --dump-dom` — 打开沟通页后先在页面里**点开目标会话**，回到终端**按 Enter** 再写入 `reports/followup_dom_hints_*.json`；第二次 Enter 关浏览器（`--no-keep-open` 时导出后立刻关）。
+- 与 login 共用 `recruit_profile`：**不要**在另一 Camoufox 仍打开时启动本脚本，否则 `launch_persistent_context` 可能秒退；先关窗或关 `login_keep_open.py`。
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ FIXED_SEED = "boss-recruit-agent-2026"
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 STATE_FILE = SCRIPT_DIR / "reports" / "followup_state.json"
 CONFIG_PATH = SCRIPT_DIR / "config.json"
+REPORTS_DIR = SCRIPT_DIR / "reports"
 
 # 招聘方沟通页（与牛人端 /web/geek/chat 区分）
 DEFAULT_CHAT_URL = os.environ.get(
@@ -176,6 +179,22 @@ def get_profile_dir() -> Path:
     p = SCRIPT_DIR / "recruit_profile"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def _profile_lock_hint(profile: Path) -> Optional[str]:
+    """若存在 profile 锁文件，多半仍有浏览器占用该目录，或上次异常退出未清锁。"""
+    for name in ("parent.lock", ".parentlock"):
+        lock = profile / name
+        try:
+            if lock.exists():
+                return (
+                    f"发现 {profile / name}：同一 recruit_profile 只能被一个 Camoufox 使用。"
+                    "请先关掉所有用该目录的浏览器（含 login_keep_open / 其它终端里的脚本窗口）；"
+                    "若已确认无进程，可手动删除上述锁文件后重试。"
+                )
+        except OSError:
+            continue
+    return None
 
 
 def load_followup_config() -> Dict[str, Any]:
@@ -347,7 +366,13 @@ def build_message(
     return msg
 
 
+_PATCH_PERSISTENT_DONE = False
+
+
 def _patch_persistent_context() -> None:
+    global _PATCH_PERSISTENT_DONE
+    if _PATCH_PERSISTENT_DONE:
+        return
     import camoufox.sync_api as sync_api
 
     _original = sync_api.NewBrowser
@@ -390,6 +415,7 @@ def _patch_persistent_context() -> None:
         )
 
     sync_api.NewBrowser = patched
+    _PATCH_PERSISTENT_DONE = True
 
 
 def _launch_browser(*, verbose: bool = False):
@@ -398,6 +424,9 @@ def _launch_browser(*, verbose: bool = False):
 
     prof = get_profile_dir().resolve()
     print(f"[followup] 持久化 profile 目录: {prof}")
+    hint = _profile_lock_hint(prof)
+    if hint:
+        print(f"[followup][WARN] {hint}")
     if verbose:
         print(f"[followup][dbg] FIXED_SEED={FIXED_SEED!r} STATE_FILE={STATE_FILE}")
 
@@ -929,6 +958,285 @@ def _click_resume_consent_agree(page, *, dry_run: bool, verbose: bool) -> bool:
     return False
 
 
+def _fill_boss_chat_editor_js(frame_or_page: Any, text: str, *, verbose: bool) -> bool:
+    """web/chat 等页：输入区常为 #boss-chat-editor-input（contenteditable），用 DOM 写入并触发 input。"""
+    js = """
+    (t) => {
+      const el =
+        document.getElementById("boss-chat-editor-input") ||
+        document.querySelector(".boss-chat-editor-input[contenteditable=\\"true\\"]");
+      if (!el || !el.isContentEditable) return false;
+      el.focus();
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+      el.click();
+      el.textContent = t;
+      try {
+        el.dispatchEvent(
+          new InputEvent("input", { bubbles: true, inputType: "insertFromPaste", data: t })
+        );
+      } catch (e) {
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return true;
+    }
+    """
+    try:
+        ok = bool(frame_or_page.evaluate(js, text))
+        if ok:
+            time.sleep(0.35)
+        return ok
+    except Exception as ex:
+        if verbose:
+            print(f"    [followup][dbg] _fill_boss_chat_editor_js: {ex!r}")
+        return False
+
+
+def _click_send_by_label_js(frame_or_page: Any, *, verbose: bool) -> bool:
+    """发送键不一定是 <button>；在可点元素中按可见文案「发送」匹配。"""
+    js = r"""
+    () => {
+      const scope =
+        document.querySelector(".boss-chat-main") ||
+        document.querySelector("[class*='boss-chat-footer']") ||
+        document.querySelector("[class*='boss-chat']") ||
+        document.body;
+      const cand = Array.from(
+        scope.querySelectorAll(
+          'button, a, div[role="button"], span[role="button"], i[role="button"], [class*="send"]'
+        )
+      );
+      for (const el of cand) {
+        const raw = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!raw || raw.length > 12) continue;
+        if (raw === "发送" || raw === "发 送" || /^发送/.test(raw)) {
+          const r = el.getBoundingClientRect();
+          if (r.width < 2 || r.height < 2) continue;
+          const st = window.getComputedStyle(el);
+          if (st.visibility === "hidden" || st.display === "none") continue;
+          if (st.pointerEvents === "none") continue;
+          el.click();
+          return true;
+        }
+      }
+      return false;
+    }
+    """
+    try:
+        ok = bool(frame_or_page.evaluate(js))
+        return ok
+    except Exception as ex:
+        if verbose:
+            print(f"    [followup][dbg] _click_send_by_label_js: {ex!r}")
+        return False
+
+
+def _focus_bottom_composer_js(frame_or_page, *, verbose: bool) -> bool:
+    """
+    不依赖 class 名：在文档里找靠近视口底部的可编辑节点并 focus+click。
+    用于 Boss Web 沟通页输入区在 Shadow/复杂结构里、Playwright 选择器扫不到的情况。
+    """
+    js = """
+    () => {
+      const pinned = document.getElementById("boss-chat-editor-input");
+      if (pinned && pinned.isContentEditable && pinned.offsetParent) {
+        pinned.focus();
+        pinned.click();
+        return true;
+      }
+      const all = Array.from(document.querySelectorAll(
+        '[contenteditable="true"], textarea:not([readonly]):not([disabled])'
+      ));
+      let best = null;
+      let bestArea = -1;
+      for (const el of all) {
+        if (!el.offsetParent) continue;
+        const st = window.getComputedStyle(el);
+        if (st.visibility === "hidden" || st.display === "none") continue;
+        const r = el.getBoundingClientRect();
+        if (r.height < 16 || r.width < 100) continue;
+        const gapBottom = window.innerHeight - r.bottom;
+        if (gapBottom > 220) continue;
+        const area = r.width * Math.min(r.height, 400);
+        if (area > bestArea) {
+          bestArea = area;
+          best = el;
+        }
+      }
+      if (best) {
+        best.focus();
+        best.click();
+        return true;
+      }
+      return false;
+    }
+    """
+    try:
+        ok = frame_or_page.evaluate(js)
+        if ok and verbose:
+            try:
+                u = getattr(frame_or_page, "url", None) or ""
+            except Exception:
+                u = ""
+            print(f"[followup][dbg] JS 已聚焦底部输入区（document 片段: {(u or '')[:100]}）")
+        return bool(ok)
+    except Exception as ex:
+        if verbose:
+            print(f"[followup][dbg] JS 聚焦底部输入区失败: {ex!r}")
+        return False
+
+
+_DOM_HINTS_JS = r"""
+() => {
+  function rect(el) {
+    const r = el.getBoundingClientRect();
+    return {
+      top: Math.round(r.top),
+      left: Math.round(r.left),
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+      bottom: Math.round(r.bottom)
+    };
+  }
+  function brief(el, extra) {
+    const o = {
+      tag: el.tagName,
+      id: el.id || "",
+      cls: (typeof el.className === "string" ? el.className : (el.className && el.baseVal) || "")
+        .slice(0, 260),
+      ph: (el.getAttribute && el.getAttribute("placeholder")) || "",
+      role: (el.getAttribute && el.getAttribute("role")) || "",
+      ce: (el.getAttribute && el.getAttribute("contenteditable")) || "",
+      name: (el.getAttribute && el.getAttribute("name")) || "",
+      type: (el.getAttribute && el.getAttribute("type")) || "",
+      r: rect(el)
+    };
+    if (extra) Object.assign(o, extra);
+    return o;
+  }
+  const hints = {
+    textareas: [],
+    contenteditables: [],
+    labeledButtons: [],
+    listRoots: []
+  };
+  document.querySelectorAll("textarea").forEach((el) => {
+    hints.textareas.push(brief(el));
+  });
+  document.querySelectorAll("[contenteditable]").forEach((el) => {
+    const v = (el.getAttribute && el.getAttribute("contenteditable")) || "";
+    if (v === "true" || v === "") hints.contenteditables.push(brief(el));
+  });
+  document.querySelectorAll("button, a, [role='button']").forEach((el) => {
+    const t = (el.innerText || "").replace(/\s+/g, " ").trim();
+    if (/发送|知道了|同意|求简历/.test(t)) {
+      hints.labeledButtons.push(brief(el, { label: t.slice(0, 40) }));
+    }
+  });
+  document.querySelectorAll("[class*='user-list'],[class*='main-list'],[class*='chat-list']").forEach((el) => {
+    hints.listRoots.push(
+      brief(el, { childCount: el.children ? el.children.length : -1 })
+    );
+  });
+  return hints;
+}
+"""
+
+
+def _collect_dom_hints_from_frame(fr: Any) -> Dict[str, Any]:
+    try:
+        u = (fr.url or "")[:400]
+    except Exception:
+        u = ""
+    try:
+        data = fr.evaluate(_DOM_HINTS_JS)
+        return {"frame_url": u, "hints": data}
+    except Exception as e:
+        return {"frame_url": u, "error": repr(e)}
+
+
+def export_followup_dom_hints(page, *, verbose: bool = False) -> Path:
+    """把各 frame 内 textarea / contenteditable / 关键按钮 / 列表容器的 class 等写入 JSON。"""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out = REPORTS_DIR / f"followup_dom_hints_{ts}.json"
+    payload: Dict[str, Any] = {
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "page_url": "",
+        "frames": [],
+    }
+    try:
+        payload["page_url"] = (page.url or "")[:500]
+    except Exception:
+        pass
+    seen = set()
+    for fr in _collect_frame_roots(page):
+        try:
+            fid = id(fr)
+        except Exception:
+            fid = 0
+        if fid in seen:
+            continue
+        seen.add(fid)
+        payload["frames"].append(_collect_dom_hints_from_frame(fr))
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[followup] DOM 线索已写入: {out}")
+    if verbose:
+        for block in payload["frames"][:6]:
+            print(f"[followup][dbg] frame: {(block.get('frame_url') or '')[:120]}")
+            if block.get("error"):
+                print(f"    err: {block['error']}")
+            else:
+                h = block.get("hints") or {}
+                print(f"    textareas={len(h.get('textareas') or [])} "
+                      f"contenteditables={len(h.get('contenteditables') or [])} "
+                      f"buttons={len(h.get('labeledButtons') or [])} "
+                      f"listRoots={len(h.get('listRoots') or [])}")
+    return out
+
+
+def run_followup_dump_dom(chat_url: str, *, keep_open: bool, verbose: bool) -> None:
+    """打开沟通页 → 等用户在页面中点开会话 → 终端 Enter 后再导出 DOM，避免未选中联系人时 JSON 为空。"""
+    v = verbose or _env_verbose()
+    browser = None
+    try:
+        browser, page = _launch_browser(verbose=v)
+        page.goto(chat_url, wait_until="domcontentloaded")
+        try:
+            page.wait_for_load_state("load", timeout=15000)
+        except Exception:
+            pass
+        time.sleep(2.0)
+        if not probe_logged_in(page, label="chat-dump"):
+            print("[login] 未登录，请先 py scripts/login.py 后重试 --dump-dom")
+            return
+        time.sleep(float(os.environ.get("BOSS_FOLLOWUP_LIST_WAIT_SEC", "4")))
+        _dismiss_boss_tip_popup(page, verbose=v)
+        time.sleep(0.4)
+        skip_prep = os.environ.get("BOSS_DUMP_DOM_SKIP_PREP_WAIT", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if not skip_prep:
+            print(
+                "\n[followup][--dump-dom] 请在浏览器中点击左侧要调试的会话，"
+                "待右侧出现聊天区/输入框后，回到本窗口按 Enter 开始写入 DOM…"
+            )
+            try:
+                input()
+            except EOFError:
+                print("[followup][WARN] 无 stdin，跳过等待，立即导出（可设 BOSS_DUMP_DOM_SKIP_PREP_WAIT=1 显式跳过）")
+        export_followup_dom_hints(page, verbose=v)
+        if keep_open:
+            try:
+                input("\n[followup] DOM 已写入。按 Enter 关闭浏览器…")
+            except EOFError:
+                time.sleep(30)
+    finally:
+        if browser is not None:
+            browser.__exit__(None, None, None)
+
+
 def _send_in_chat(page, text: str, dry_run: bool, *, verbose: bool = False) -> bool:
     if dry_run:
         print(f"    [dry-run] 将发送: {text[:200]}...")
@@ -943,26 +1251,53 @@ def _send_in_chat(page, text: str, dry_run: bool, *, verbose: bool = False) -> b
         "textarea[placeholder*='输入']",
         "textarea[placeholder*='请输入']",
         "textarea[placeholder*='消息']",
+        "textarea[placeholder*='和牛人']",
+        "textarea.duty-input",
+        "textarea[class*='input']",
+        "textarea[class*='editor']",
         ".boss-chat-editor textarea",
         "[class*='chat-editor'] textarea",
         "[class*='im-input'] textarea",
+        "[class*='im-text'] textarea",
+        "[class*='send-box'] textarea",
+        "[class*='duty-send'] textarea",
         ".input-area textarea",
         "[class*='footer'] textarea",
         "[class*='editor'] textarea",
+        "[class*='message-input'] textarea",
     )
     contenteditable_sels = (
+        "#boss-chat-editor-input",
+        "div#boss-chat-editor-input",
+        ".boss-chat-editor-input[contenteditable='true']",
         ".boss-chat-editor [contenteditable='true']",
+        "[class*='boss-chat-editor'] [contenteditable='true']",
         "[class*='chat-editor'] [contenteditable='true']",
+        "[class*='im-input'] [contenteditable='true']",
+        "[class*='im-text'] [contenteditable='true']",
+        "[class*='send-area'] [contenteditable='true']",
+        "[class*='duty-send'] [contenteditable='true']",
         "[contenteditable='true'][data-placeholder]",
         "div[role='textbox']",
         "[class*='im-editor'] [contenteditable='true']",
+        "[class*='editor-area'] [contenteditable='true']",
+        "[class*='ql-editor']",
+        "[class*='ProseMirror']",
     )
     scoped = (
         page.locator("[class*='chat-footer']"),
         page.locator("[class*='im-footer']"),
-        page.locator(".boss-chat-editor"),
-        page.locator("[class*='input-wrap']"),
+        page.locator("[class*='im-chat']"),
+        page.locator("[class*='duty-send']"),
+        page.locator("[class*='send-box']"),
+        page.locator("[class*='chat-bottom']"),
         page.locator("[class*='bottom-editor']"),
+        page.locator(".boss-chat-editor"),
+        page.locator("[class*='boss-chat-footer']"),
+        page.locator("[class*='boss-chat-editor-wrap']"),
+        page.locator("[class*='input-wrap']"),
+        page.locator("[class*='message-editor']"),
+        page.locator("footer"),
     )
 
     contexts: List[Any] = [page]
@@ -977,11 +1312,15 @@ def _send_in_chat(page, text: str, dry_run: bool, *, verbose: bool = False) -> b
         try:
             if loc.count() == 0:
                 return False
-            if not loc.is_visible(timeout=2500):
-                return False
             loc.scroll_into_view_if_needed(timeout=5000)
-            time.sleep(0.15)
-            loc.click(timeout=4000)
+            time.sleep(0.12)
+            try:
+                loc.click(timeout=4000)
+            except Exception:
+                try:
+                    loc.click(timeout=4000, force=True)
+                except Exception:
+                    return False
             time.sleep(0.2)
             try:
                 loc.fill(text, timeout=8000)
@@ -1001,26 +1340,49 @@ def _send_in_chat(page, text: str, dry_run: bool, *, verbose: bool = False) -> b
             return False
 
     used_tag = ""
-    for root in scoped:
-        try:
-            if root.count() == 0:
+    priority_ce = (
+        "#boss-chat-editor-input",
+        "div#boss-chat-editor-input",
+        ".boss-chat-editor-input[contenteditable='true']",
+    )
+    for ctx in contexts:
+        for sel in priority_ce:
+            tag = f"{type(ctx).__name__}>>{sel}"
+            if try_fill(ctx.locator(sel).first, tag):
+                used_tag = tag
+                break
+        if used_tag:
+            break
+    if not used_tag:
+        for ctx in contexts:
+            if _fill_boss_chat_editor_js(ctx, text, verbose=verbose):
+                used_tag = f"js>>boss-chat-editor-input::{type(ctx).__name__}"
+                print(
+                    f"    [followup] 已通过 JS 写入沟通输入区（{type(ctx).__name__}）"
+                )
+                break
+
+    if not used_tag:
+        for root in scoped:
+            try:
+                if root.count() == 0:
+                    continue
+            except Exception:
                 continue
-        except Exception:
-            continue
-        for sel in selectors_ta:
-            tag = f"scoped>>{sel}"
-            if try_fill(root.locator(sel).first, tag):
-                used_tag = tag
+            for sel in selectors_ta:
+                tag = f"scoped>>{sel}"
+                if try_fill(root.locator(sel).first, tag):
+                    used_tag = tag
+                    break
+            if used_tag:
                 break
-        if used_tag:
-            break
-        for sel in contenteditable_sels:
-            tag = f"scoped>>{sel}"
-            if try_fill(root.locator(sel).first, tag):
-                used_tag = tag
+            for sel in contenteditable_sels:
+                tag = f"scoped>>{sel}"
+                if try_fill(root.locator(sel).first, tag):
+                    used_tag = tag
+                    break
+            if used_tag:
                 break
-        if used_tag:
-            break
 
     if not used_tag:
         for ctx in contexts:
@@ -1040,10 +1402,29 @@ def _send_in_chat(page, text: str, dry_run: bool, *, verbose: bool = False) -> b
                 break
 
     if not used_tag:
-        print("    [WARN] 未找到可编辑的输入区（textarea / contenteditable），请留窗用 DevTools 看底部编辑器 class")
+        for fr in contexts:
+            if _focus_bottom_composer_js(fr, verbose=verbose):
+                try:
+                    page.keyboard.type(text, delay=12)
+                    time.sleep(0.35)
+                    used_tag = "js-bottom-focus+keyboard.type"
+                    print(f"    [followup] 已通过 JS 聚焦底部输入区并 keyboard.type 写入（{type(fr).__name__}）")
+                    break
+                except Exception as ex:
+                    if verbose:
+                        print(f"    [followup][dbg] keyboard.type 失败: {ex!r}")
+
+    if not used_tag:
+        print(
+            "    [WARN] 仍未找到输入区；若页面有「知道了」请先手动点掉，或升级 camoufox/playwright 后重试。"
+        )
         return False
 
     for sbtn in (
+        '[class*="boss-chat"] button:has-text("发送")',
+        ".boss-main-send-msg",
+        '[class*="send-msg"]',
+        '[class*="boss-main-send"]',
         'button:has-text("发送")',
         "button.btn-send",
         ".btn-send",
@@ -1066,6 +1447,21 @@ def _send_in_chat(page, text: str, dry_run: bool, *, verbose: bool = False) -> b
                 if verbose:
                     print(f"    [followup][dbg] 发送按钮 {sbtn!r} 失败: {ex!r}")
                 continue
+    for ctx in contexts:
+        if _click_send_by_label_js(ctx, verbose=verbose):
+            time.sleep(1.0)
+            print("    [OK] 已点击发送（JS 文案匹配）")
+            return True
+    try:
+        sb = page.get_by_role("button", name=re.compile(r"\s*发送\s*")).first
+        if sb.count() and sb.is_visible(timeout=2000):
+            sb.click(timeout=5000)
+            time.sleep(1.0)
+            print("    [OK] 已点击发送（get_by_role 发送）")
+            return True
+    except Exception as ex:
+        if verbose:
+            print(f"    [followup][dbg] get_by_role 发送: {ex!r}")
     try:
         if verbose:
             print("    [followup][dbg] 尝试 keyboard Enter 发送")
@@ -1461,6 +1857,11 @@ def main():
         help="详细调试输出（也可用环境变量 BOSS_FOLLOWUP_VERBOSE=1）",
     )
     parser.add_argument(
+        "--dump-dom",
+        action="store_true",
+        help="打开沟通页 → 你在页面中点开会话 → 终端按 Enter 后写入 reports/followup_dom_hints_*.json（无需 F12）",
+    )
+    parser.add_argument(
         "--resume-only",
         action="store_true",
         help="每条只发索要简历话术（也可用 config.json followup.resume_only 或 BOSS_FOLLOWUP_RESUME_ONLY=1）",
@@ -1477,22 +1878,31 @@ def main():
 
     v_flag = args.verbose or _env_verbose()
     explicit_keep = args.keep_open or _env_keep_open()
-    auto_keep = (args.dry_run or v_flag) and not args.no_keep_open and not _env_no_keep_open()
+    auto_keep = (
+        args.dry_run or v_flag or args.dump_dom
+    ) and not args.no_keep_open and not _env_no_keep_open()
     keep_open_effective = explicit_keep or auto_keep
     if auto_keep and not explicit_keep:
         print(
-            "[followup] 因 --dry-run 或 -v：默认留窗，按 Enter 后再关浏览器。"
+            "[followup] 因 --dry-run、-v 或 --dump-dom：默认留窗，按 Enter 后再关浏览器。"
             "若需跑完立即关，请加 --no-keep-open 或设 BOSS_FOLLOWUP_NO_KEEP_OPEN=1。"
         )
 
-    run_followup(
-        max_items=max(0, args.max),
-        dry_run=args.dry_run,
-        chat_url=args.chat_url,
-        keep_open=keep_open_effective,
-        verbose=args.verbose,
-        resume_only=args.resume_only,
-    )
+    if args.dump_dom:
+        run_followup_dump_dom(
+            args.chat_url,
+            keep_open=keep_open_effective,
+            verbose=v_flag,
+        )
+    else:
+        run_followup(
+            max_items=max(0, args.max),
+            dry_run=args.dry_run,
+            chat_url=args.chat_url,
+            keep_open=keep_open_effective,
+            verbose=args.verbose,
+            resume_only=args.resume_only,
+        )
 
 
 if __name__ == "__main__":
