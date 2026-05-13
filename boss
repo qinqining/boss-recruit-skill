@@ -7,7 +7,7 @@ Boss Recruit CLI - 招聘方自动化入口（技能根目录下执行）
   py boss greet                       # 同上，默认最多成功打招呼 20 人（可 BOSS_GREET_TOP=30）
   py boss greet --top 15               # 自定义上限
   py boss greet --no-report            # 不写判定报告
-  py boss followup [--max 5]        # 沟通列表「继续沟通」智能跟进（与 greet 同 profile）
+  py boss followup [--max 5] [--dry-run] [--resume-only]  # 沟通列表跟进（与 greet 同 profile）
   py boss followup --dry-run         # 只打印将发送的文案
   py boss run --keywords SEO        # 一键运行
 """
