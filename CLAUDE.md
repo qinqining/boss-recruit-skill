@@ -1,6 +1,6 @@
 # Boss Recruit — Agent 指令
 
-> 在 BOSS 直聘上自动筛选牛人、打招呼、智能回复。
+> 在 BOSS 直聘上自动筛选牛人、打招呼、智能回复；以及仓库内的**离线**简历筛选评分与面试方案生成。
 
 ## 何时使用
 
@@ -9,6 +9,8 @@
 - BOSS直聘招聘方、牛人
 - 打招呼、筛选简历
 - 自动回复、聊天自动化
+- **简历筛选评分**、简历打分、候选人归档、`简历筛选评分任务`
+- **面试方案**、面试十问、素质项、`面试方案生成任务`
 
 ## 前置条件
 
@@ -37,9 +39,6 @@ python boss greet
 python boss followup
 python boss followup --dry-run
 
-# 消息监控（旧版）
-python scripts/chat_auto.py --interval 30
-
 # 一键运行
 python scripts/run_pipeline.py --keywords SEO --top 5
 ```
@@ -52,7 +51,7 @@ python scripts/run_pipeline.py --keywords SEO --top 5
 2. **登录** — `python scripts/login.py`（首次需要扫码）
 3. **搜索筛选** — `python boss greet`（默认最多成功打招呼 20；可选 `--top N`；报告见 `reports/`）
 4. **展示结果** — 列出已打招呼的牛人
-5. **监控回复** — `python scripts/chat_auto.py`（可选）
+5. **列表跟进** — `python boss followup`（可选，见 `AGENTS.md`）
 
 ## 打招呼前筛选逻辑
 
@@ -82,13 +81,39 @@ Agent 分析候选人回复，决定：
 
 **绝不重试 Code 36/32。**
 
+---
+
+## 离线任务：简历筛选评分
+
+**无浏览器**。按 `简历筛选评分任务/简历筛选任务.md` 执行。
+
+| 项 | 路径 |
+|----|------|
+| 任务说明 | `简历筛选评分任务/简历筛选任务.md` |
+| 岗位 JD | `简历筛选评分任务/技术SEO岗位要求.md`（可按岗替换） |
+| 待评简历 | `简历筛选评分任务/需筛选简历/` |
+| 产出 | `简历筛选评分任务/输出/`，文件名含日期 `YYYY-MM-DD` |
+| 归档 | `简历筛选评分任务/已归档/YYYY-MM-DD/` |
+
+## 离线任务：面试方案生成
+
+**无浏览器**。先读 `面试方案生成任务/岗位层级说明.md`，再读 `面试方案生成任务/任务.md`。
+
+| 项 | 路径 |
+|----|------|
+| 任务说明 | `面试方案生成任务/任务.md` |
+| 助理向校准 | `面试方案生成任务/岗位层级说明.md` |
+| 素质表（Markdown） | `面试方案生成任务/岗位素质项/01_岗位与JD门槛.md`、`02_素质分档与面试母题.md` |
+| 候选人材料 | `面试方案生成任务/候选人简历/`（默认；或由用户指定路径） |
+| 产出 | `面试方案生成任务/输出/`：**必须**含带日期的 **`面试方案_*.docx`**（Word）；可先写 `.md` 再 `python scripts/interview_plan_md_to_docx.py <路径>.md`（`pip install python-docx`） |
+
 ## 频率限制
 
 - 打招呼间隔：5秒
-- 消息检查间隔：30秒
-- 单次最大：20条
+- 列表跟进发送间隔：见 `config.json` → `followup.pause_after_send_sec`
+- 单次最大打招呼：20条
 
 ## 技术文档
 
-- `SKILL.md` — 完整功能说明
+- `SKILL.md` — 完整功能说明（含 BOSS 自动化与离线任务）
 - `docs/REVERSE_ENGINEERING.md` — BOSS 反爬研究

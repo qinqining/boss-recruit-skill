@@ -1,15 +1,15 @@
 ---
 name: boss-recruit
-description: "BOSS直聘招聘方自动化：推荐牛人筛选 → 打招呼 → 智能回复判断 → 邀约面试"
+description: "BOSS直聘招聘方自动化（Camoufox：筛选→打招呼→跟进）；离线：简历筛选评分、面试方案（十问+Word交付）"
 ---
 
 # Boss Recruit — 招聘方自动化
 
 ## Overview
 
-BOSS直聘招聘方自动化，使用 Camoufox 绕过反爬，实现：推荐牛人筛选 → 打招呼前简历分析 → 智能回复判断 → 邀约面试。
+BOSS直聘招聘方自动化（Camoufox）：推荐牛人筛选 → 打招呼前规则判定 → 沟通列表跟进；另含**离线**任务：本地简历库筛选评分、按素质项与候选人材料生成面试方案（十问），**面试方案正式交付须含 Word（`.docx`）**，见 `面试方案生成任务/任务.md`。
 
-Pattern: 扫码登录 → 筛选牛人 → 简历内容分析 → 打招呼 → 多Agent聊天跟进
+Pattern: 扫码登录 → 筛选牛人 → 简历内容分析 → 打招呼 → 多Agent聊天跟进；离线任务为读 Markdown/PDF，无 BOSS 浏览器步骤。
 
 ## When to Use
 
@@ -17,6 +17,26 @@ Pattern: 扫码登录 → 筛选牛人 → 简历内容分析 → 打招呼 → 
 - 筛选牛人简历（SEO/Google 相关经验）
 - 智能判断候选人回复，决定邀约或放弃
 - 批量跟进消息，自动邀约面试
+- **离线**：简历筛选评分、按 JD 与案例打分、输出与按日期归档（见 `简历筛选评分任务/`）
+- **离线**：面试方案（十问）、素质项与助理向校准；**须输出 `.docx`**（见 `面试方案生成任务/任务.md` 与 `scripts/interview_plan_md_to_docx.py`）
+
+## 离线任务（无 Camoufox）
+
+与 BOSS 页面自动化独立；Agent 读任务说明与本地文件即可。
+
+### 简历筛选评分
+
+- **入口**：`简历筛选评分任务/简历筛选任务.md`
+- **输入**：`简历筛选评分任务/技术SEO岗位要求.md`（可换岗）、`简历筛选评分任务/需筛选简历/`、`简历筛选评分任务/优秀简历案例/`、`简历筛选评分任务/不合格简历案例/`
+- **输出**：`简历筛选评分任务/输出/` 下带日期的评分报告；已处理简历移入 `简历筛选评分任务/已归档/YYYY-MM-DD/`
+- 目录说明：`简历筛选评分任务/README.md`
+
+### 面试方案生成
+
+- **入口**：`面试方案生成任务/任务.md`；**必读**：`面试方案生成任务/岗位层级说明.md`（素质表为运营档、默认面试 **SEO 助理** 时的校准规则）
+- **素质表（Markdown）**：`面试方案生成任务/岗位素质项/01_岗位与JD门槛.md`、`02_素质分档与面试母题.md`
+- **候选人**：默认 `面试方案生成任务/候选人简历/` 或用户指定路径
+- **输出**：`面试方案生成任务/输出/` 下**必须**含带日期的 **`面试方案_*.docx`**（正式交付）；可先写同名 `.md` 再运行 `python scripts/interview_plan_md_to_docx.py …md` 生成 Word（需 `pip install python-docx`）
 
 ## Core Pattern
 
@@ -69,7 +89,7 @@ python scripts/search_talent.py
 ```
 
 - 进入"推荐牛人"
-- 设置筛选：学历本科、求职意向（离职随时到岗/在职考虑机会/在职月内到岗）
+- 设置筛选：学历本科、求职意向（离职随时到岗 / 在职月内到岗；不含「在职-考虑机会」——脚本不对其打招呼）
 - 遍历牛人列表
 
 ### 步骤3：打招呼前筛选（命令行 / CLI）
@@ -109,14 +129,6 @@ python boss followup --dry-run
 - 默认打开 **`/web/boss/chat`**；若入口不同，设置环境变量 `BOSS_RECRUIT_CHAT_URL`。  
 - 在列表中查找含 **「继续沟通」** 的会话，依次打开并发送**短跟进**（公司地址/通勤、经历追问、索要 PDF 简历），轮次与上限见根目录 **`AGENTS.md`**。  
 - 状态记录在 `reports/followup_state.json`（防同日对同一人刷太多条）。
-
-### 步骤5：消息监控（旧版，可选）
-
-```bash
-python scripts/chat_auto.py --interval 30
-```
-
-- 基于 **Cookie JSON** 的异步轮询，与 `greet` 的 profile 体系**不一定一致**；新跟进请优先用 **步骤4**。
 
 更多 Agent 话术与安全边界见 **`AGENTS.md`**。
 
@@ -180,9 +192,6 @@ python scripts/greet.py
 python boss followup
 python boss followup --dry-run
 
-# 消息监控（旧版）
-python scripts/chat_auto.py --interval 30
-
 # 一键运行
 python scripts/run_pipeline.py --keywords SEO --top 5
 ```
@@ -202,24 +211,29 @@ python scripts/run_pipeline.py --keywords SEO --top 5
 
 - 页面操作间隔：3-5秒
 - 打招呼间隔：5秒
-- 消息检查间隔：30秒
+- 跟进发送间隔：见 `config.json` → `followup.pause_after_send_sec`（默认约 6 秒）
 - 单次最大打招呼：20条
 
 ## 文件结构
 
 ```
 boss-recruit/
-├── SKILL.md                    # 主文档
-├── CLAUDE.md                   # Agent 指令
-├── boss                        # CLI 入口
+├── SKILL.md
+├── CLAUDE.md
+├── AGENTS.md
+├── boss
+├── 简历筛选评分任务/          # 离线：简历打分、输出、归档
+├── 面试方案生成任务/          # 离线：面试方案（十问）、岗位素质项 md
 ├── scripts/
-│   ├── login.py                # 扫码登录
-│   ├── search_talent.py        # 搜索牛人 + 筛选
-│   ├── greet.py                # 打招呼前筛选
-│   ├── chat_auto.py           # 消息监控 + 智能判断
-│   └── run_pipeline.py         # 一键 pipeline
+│   ├── login.py
+│   ├── search_talent.py
+│   ├── greet.py
+│   ├── chat_followup.py
+│   ├── run_pipeline.py
+│   ├── export_seo_competency_xlsx_to_md.py  # 可选：从 xlsx 重导素质项 md
+│   └── interview_plan_md_to_docx.py        # 面试方案 md → Word
 └── docs/
-    └── REVERSE_ENGINEERING.md  # 反爬研究
+    └── REVERSE_ENGINEERING.md
 ```
 
 ## 技术要点

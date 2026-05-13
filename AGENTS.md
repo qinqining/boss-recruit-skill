@@ -1,6 +1,6 @@
 # Boss Recruit — Skill Instructions（招聘方）
 
-> 在 BOSS 直聘**招聘方**侧：推荐牛人筛选 → 打招呼 → **沟通列表「继续沟通」智能跟进** →（可选）消息监控。
+> 在 BOSS 直聘**招聘方**侧：推荐牛人筛选 → 打招呼 → **沟通列表「继续沟通」智能跟进**。
 
 本文件结构与求职端 `boss-auto-job-skills/AGENTS.md` 对齐，便于 Agent 统一理解「何时用哪条命令、文案与安全边界」。
 
@@ -12,6 +12,8 @@
 - 打招呼、自动打招呼、简历规则匹配  
 - **发消息后跟进**、**继续沟通**、**聊天跟进**、索要简历、约面试前闲聊  
 - 智能回复、沟通列表、候选人跟进  
+- **简历筛选评分**、`简历筛选评分任务`  
+- **面试方案**（十问，**须输出 `.docx`**）、`面试方案生成任务`、`任务.md`、`scripts/interview_plan_md_to_docx.py`  
 
 ## 前置条件
 
@@ -36,10 +38,9 @@ python boss greet --top 15 --no-report
 python boss followup
 python boss followup --max 3
 python boss followup --dry-run
-
-# 旧版消息轮询（async + 读 JSON cookie，与 greet 的 profile 不一定一致，仅兼容保留）
-python boss monitor --interval 30
 ```
+
+`boss monitor` / `chat_auto.py` 已移除；消息跟进请统一使用 **`python boss followup`**（与 `greet` 同 profile）。
 
 ### 沟通页 URL
 

@@ -283,9 +283,9 @@ if not OPENAI_API_KEY:
 OPENAI_BASE_URL = os.environ.get("MINIMAX_BASE_URL", "https://api.minimax.chat/v1")
 LLM_MODEL = os.environ.get("MINIMAX_MODEL", "MiniMax-M2.7")
 
-# 卡片求职状态：以下任一为通过（第一步筛选）
+# 卡片求职状态：仅「离职-随时到岗」「在职-月内到岗」可进流程；「在职-考虑机会」在 card_header_gate 直接跳过
 CARD_ALLOWED_JOB_STATUS = re.compile(
-    r"(离职\s*[-－]\s*随时到岗|在职\s*[-－]\s*考虑机会|在职\s*[-－]\s*月内到岗)"
+    r"(离职\s*[-－]\s*随时到岗|在职\s*[-－]\s*月内到岗)"
 )
 
 # 抓取到的在线简历至少多长才调用 LLM（过短多为仅有时间线）
@@ -306,6 +306,9 @@ RULE_SIDEBAR_SEO_SUBSTR = tuple(
     if x.strip()
 )
 
+# 卡片为「在职-月内到岗」时：综合词库至少命中项数（防仅靠弱命中通过）
+RULE_ON_JOB_MIN_COMBINED_HITS = int(os.environ.get("RULE_ON_JOB_MIN_COMBINED_HITS", "2"))
+
 # 卡片+侧栏合并文本需至少命中其一（小写匹配 google）
 RULE_COMBINED_ANY_SUBSTR = tuple(
     x.strip().lower()
@@ -325,10 +328,16 @@ CAPTURE_RESUME_WAPI = os.environ.get("BOSS_CAPTURE_RESUME_WAPI", "1").lower() no
 
 
 def card_has_allowed_job_status(card_text: str) -> bool:
-    """离职-随时到岗 / 在职-考虑机会 / 在职-月内到岗 任一即 True。"""
+    """离职-随时到岗 / 在职-月内到岗 任一即 True（不含在职-考虑机会）。"""
     if not card_text:
         return False
     return bool(CARD_ALLOWED_JOB_STATUS.search(card_text))
+
+
+def card_indicates_on_job_month_arrival(card_text: str) -> bool:
+    """卡片为「在职-月内到岗」（仍做侧栏时间线与词库加强校验）。"""
+    t = card_text or ""
+    return bool(re.search(r"在职\s*[-－]\s*月内到岗", t))
 
 
 def parse_age_from_card(card_text: str):
@@ -372,10 +381,12 @@ def card_header_gate(card_text: str, max_age: int):
         return True, edu_reason
     if edu_ok is None:
         return True, "卡片未标明本科及以上学历，跳过"
+    if re.search(r"在职\s*[-－]\s*考虑机会", card_text or ""):
+        return True, "卡片为在职-考虑机会，不参与自动打招呼，跳过"
     if not card_has_allowed_job_status(card_text):
         return (
             True,
-            "求职状态不在允许范围（需：离职-随时到岗 / 在职-考虑机会 / 在职-月内到岗），跳过",
+            "求职状态不在允许范围（需：离职-随时到岗 / 在职-月内到岗），跳过",
         )
     return False, ""
 
@@ -454,6 +465,27 @@ def rule_based_match(card_text: str, sidebar_text: str) -> dict:
             "reason": "卡片+侧栏未命中SEO运营/B端/Google等关键词",
         }
 
+    # 在职-月内到岗：与侧栏时间线、关键词强度对齐
+    if card_indicates_on_job_month_arrival(card_text or ""):
+        if gap > 0:
+            return {
+                "is_match": False,
+                "score": 0,
+                "reason": (
+                    "卡片为在职-月内到岗，但侧栏首段经历为已结束工作，"
+                    f"与在职状态不一致（{gap_note}），不自动匹配"
+                ),
+            }
+        if len(matched_kw) < RULE_ON_JOB_MIN_COMBINED_HITS:
+            return {
+                "is_match": False,
+                "score": 0,
+                "reason": (
+                    f"卡片为在职-月内到岗：综合词库仅命中{len(matched_kw)}项，"
+                    f"需≥{RULE_ON_JOB_MIN_COMBINED_HITS}项才自动匹配"
+                ),
+            }
+
     hits = len(matched_kw)
     raw_score = 70 + hits * 5
     score = min(100, raw_score)
@@ -508,7 +540,7 @@ def sleep_after_match_before_greet() -> None:
         lo, hi = base * 0.88, base * 1.42
     else:
         if BOSS_GREET_SAFE_PACE:
-            lo, hi = 45.0, 88.0
+            lo, hi = 10.0, 30.0
         else:
             lo, hi = 24.0, 40.0
     if lo > hi:
@@ -551,7 +583,7 @@ BOSS_FILTER_JOB_TAGS = [
     x.strip()
     for x in os.environ.get(
         "BOSS_FILTER_JOB_TAGS",
-        "离职-随时到岗,在职-考虑机会,在职-月内到岗",
+        "离职-随时到岗,在职-月内到岗",
     ).split(",")
     if x.strip()
 ]

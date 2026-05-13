@@ -132,9 +132,10 @@ async def run(keywords=None, top=5, monitor_interval=0):
 
         # 4. 如果需要监控，启动监控
         if monitor_interval > 0:
-            print(f"\n🔔 启动消息监控（间隔 {monitor_interval} 秒）...")
-            # 这里可以启动监控逻辑，但需要新页面
-            # 简化处理：提示用户手动运行 chat_auto.py
+            print(
+                f"\n🔔 已跳过旧版轮询监控（--monitor 已废弃）。"
+                f"请在同一 profile 下手动执行：python boss followup [--max N]"
+            )
 
     except Exception as e:
         print(f"❌ Pipeline 失败: {e}")

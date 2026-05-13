@@ -74,14 +74,13 @@ async def search_talent(pages=2):
         except Exception as e:
             print(f"  ⚠️ 学历筛选失败: {e}")
 
-        # 设置求职意向筛选（离职-随时到岗、在职-考虑机会、在职-月内到岗）
+        # 设置求职意向筛选（与 greet 默认一致：离职-随时到岗、在职-月内到岗）
         try:
             intent_dropdown = await page.query_selector("[data-role='jobIntent']")
             if intent_dropdown:
                 await intent_dropdown.click()
                 await asyncio.sleep(0.5)
-                # 选择三个选项
-                for text in ["离职-随时到岗", "在职-考虑机会", "在职-月内到岗"]:
+                for text in ["离职-随时到岗", "在职-月内到岗"]:
                     try:
                         await page.click(f"text={text}")
                         print(f"  ✓ 求职意向: {text}")

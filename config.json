@@ -8,7 +8,6 @@
   "max_age": 32,
   "greeting_limit": 20,
   "greet_interval": 5,
-  "monitor_interval": 30,
   "followup": {
     "company_location": "壹方天地B区",
     "commute_note": "如可接受我们再约具体面试与时间。",
