@@ -35,7 +35,7 @@ async def run(keywords=None, top=5, monitor_interval=0):
     # 检查登录
     cookies = load_cookies()
     if not cookies:
-        print("❌ 未登录，请先运行 python scripts/login.py")
+        print("❌ 未登录，请先运行 py scripts/login.py")
         return
 
     browser = Camoufox(
@@ -134,7 +134,7 @@ async def run(keywords=None, top=5, monitor_interval=0):
         if monitor_interval > 0:
             print(
                 f"\n🔔 已跳过旧版轮询监控（--monitor 已废弃）。"
-                f"请在同一 profile 下手动执行：python boss followup [--max N]"
+                f"请在同一 profile 下手动执行：py boss followup [--max N]"
             )
 
     except Exception as e:

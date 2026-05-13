@@ -318,7 +318,7 @@ def run_followup(max_items: int, dry_run: bool, chat_url: str) -> int:
         time.sleep(2.0)
 
         if not probe_logged_in(page, label="chat"):
-            print("[login] 未登录或探测失败，请先在同一 profile 下执行 python scripts/login.py 扫码")
+            print("[login] 未登录或探测失败，请先在同一 profile 下执行 py scripts/login.py 扫码")
             return 0
 
         time.sleep(1.5)

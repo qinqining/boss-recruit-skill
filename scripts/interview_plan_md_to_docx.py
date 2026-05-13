@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """将面试方案 Markdown 转为 Word（.docx）。用于满足「正式交付物为 .docx」。
 
-用法（仓库根目录）：
+用法（仓库根目录，Windows 推荐 py）：
   pip install python-docx
-  python scripts/interview_plan_md_to_docx.py 面试方案生成任务/输出/面试方案_2026-05-13_张三.md
+  py scripts/interview_plan_md_to_docx.py 面试方案生成任务/输出/面试方案_2026-05-13_张三.md
 
 未传第二参数时，在同目录生成同名 .docx。
 """

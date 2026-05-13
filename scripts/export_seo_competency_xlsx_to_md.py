@@ -2,7 +2,7 @@
 """
 可选：若本地存在「面试方案生成任务/SEO运营岗位素质项.xlsx」，则覆盖写入
 「面试方案生成任务/岗位素质项/」下 01、02 两个 md。不生成 README，不写「导出自」。
-仓库根目录：python scripts/export_seo_competency_xlsx_to_md.py
+仓库根目录（Windows 推荐 py）：py scripts/export_seo_competency_xlsx_to_md.py
 """
 from __future__ import annotations
 

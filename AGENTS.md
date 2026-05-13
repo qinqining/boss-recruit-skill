@@ -12,7 +12,7 @@
 - 打招呼、自动打招呼、简历规则匹配  
 - **发消息后跟进**、**继续沟通**、**聊天跟进**、索要简历、约面试前闲聊  
 - 智能回复、沟通列表、候选人跟进  
-- **简历筛选评分**、`简历筛选评分任务`  
+- **简历筛选评分**、`简历筛选评分任务`（PDF 先 `py scripts/pdf_resume_to_md.py` 转 md）  
 - **面试方案**（十问，**须输出 `.docx`**）、`面试方案生成任务`、`任务.md`、`scripts/interview_plan_md_to_docx.py`  
 
 ## 前置条件
@@ -22,30 +22,31 @@ pip install "camoufox[geoip]" && camoufox fetch
 ```
 
 - 与 `greet` 相同：使用 **`recruit_profile`** 持久化浏览器目录（与 `scripts/login.py` / `scripts/greet.py` 共用），扫码一次后尽量同一环境复用。  
+- 下文命令统一为 **`py`**（Windows）；非 Windows 可用 `python3` 等价替换。
 - 跟进文案里的**公司地址/通勤说明**写在 `config.json` 的 `followup` 段（见下），或环境变量 `BOSS_FOLLOWUP_LOCATION` / `BOSS_FOLLOWUP_COMMUTE_NOTE`。
 
 ## 工具（`boss` CLI，在技能根目录执行）
 
 ```bash
 # 登录（首次扫码；Cookie/profile 写入 recruit_profile + ~/.agent-browser/auth/）
-python scripts/login.py
+py scripts/login.py
 
 # 推荐牛人：规则筛选 + 自动打招呼（默认最多 20 次成功打招呼，可 --top）
-python boss greet
-python boss greet --top 15 --no-report
+py boss greet
+py boss greet --top 15 --no-report
 
 # ★ 发消息后的列表跟进：打开沟通页，筛「继续沟通」，轮换短问（地址/经历/要简历）
-python boss followup
-python boss followup --max 3
-python boss followup --dry-run
+py boss followup
+py boss followup --max 3
+py boss followup --dry-run
 ```
 
-`boss monitor` / `chat_auto.py` 已移除；消息跟进请统一使用 **`python boss followup`**（与 `greet` 同 profile）。
+`boss monitor` / `chat_auto.py` 已移除；消息跟进请统一使用 **`py boss followup`**（与 `greet` 同 profile）。
 
 ### 沟通页 URL
 
 - 默认：`https://www.zhipin.com/web/boss/chat`（招聘方）  
-- 若你账号实际入口不同：`BOSS_RECRUIT_CHAT_URL=... python scripts/chat_followup.py`
+- 若你账号实际入口不同：`BOSS_RECRUIT_CHAT_URL=... py scripts/chat_followup.py`
 
 ## 工作流程（推荐顺序）
 
@@ -53,8 +54,8 @@ python boss followup --dry-run
 
 1. **确认已用同一 profile 登录过** — 与打招呼同一台机、同一 `recruit_profile` 目录。  
 2. **配置跟进话术变量** — 编辑 `config.json` → `followup.company_location`、`commute_note`（或环境变量）。  
-3. **先 dry-run** — `python boss followup --dry-run --max 3`，确认控制台里**将要发送**的文案得体。  
-4. **用户确认后再真实发送** — `python boss followup --max 5`（默认 5）。  
+3. **先 dry-run** — `py boss followup --dry-run --max 3`，确认控制台里**将要发送**的文案得体。  
+4. **用户确认后再真实发送** — `py boss followup --max 5`（默认 5）。  
 5. **不要高频连跑** — 与打招呼共用风控；单日对同一会话默认最多跟进 **2 轮**（`BOSS_FOLLOWUP_MAX_PER_DAY` 可调）。
 
 ## 智能跟进规则（脚本内置，非 LLM 也可运行）

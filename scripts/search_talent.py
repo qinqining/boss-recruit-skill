@@ -37,7 +37,7 @@ async def search_talent(pages=2):
     # 加载 cookies
     cookies = load_cookies()
     if not cookies:
-        print("❌ 未登录，请先运行 python scripts/login.py")
+        print("❌ 未登录，请先运行 py scripts/login.py")
         return []
 
     browser = Camoufox(

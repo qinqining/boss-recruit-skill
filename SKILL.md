@@ -27,7 +27,7 @@ Pattern: 扫码登录 → 筛选牛人 → 简历内容分析 → 打招呼 → 
 ### 简历筛选评分
 
 - **入口**：`简历筛选评分任务/简历筛选任务.md`
-- **输入**：`简历筛选评分任务/技术SEO岗位要求.md`（可换岗）、`简历筛选评分任务/需筛选简历/`、`简历筛选评分任务/优秀简历案例/`、`简历筛选评分任务/不合格简历案例/`
+- **输入**：`简历筛选评分任务/技术SEO岗位要求.md`（可换岗）、`简历筛选评分任务/需筛选简历/`、`简历筛选评分任务/优秀简历案例/`、`简历筛选评分任务/不合格简历案例/`；**PDF 先** `py scripts/pdf_resume_to_md.py …pdf` **转 md** 再读（`pip install pymupdf`）
 - **输出**：`简历筛选评分任务/输出/` 下带日期的评分报告；已处理简历移入 `简历筛选评分任务/已归档/YYYY-MM-DD/`
 - 目录说明：`简历筛选评分任务/README.md`
 
@@ -35,8 +35,8 @@ Pattern: 扫码登录 → 筛选牛人 → 简历内容分析 → 打招呼 → 
 
 - **入口**：`面试方案生成任务/任务.md`；**必读**：`面试方案生成任务/岗位层级说明.md`（素质表为运营档、默认面试 **SEO 助理** 时的校准规则）
 - **素质表（Markdown）**：`面试方案生成任务/岗位素质项/01_岗位与JD门槛.md`、`02_素质分档与面试母题.md`
-- **候选人**：默认 `面试方案生成任务/候选人简历/` 或用户指定路径
-- **输出**：`面试方案生成任务/输出/` 下**必须**含带日期的 **`面试方案_*.docx`**（正式交付）；可先写同名 `.md` 再运行 `python scripts/interview_plan_md_to_docx.py …md` 生成 Word（需 `pip install python-docx`）
+- **候选人**：默认 `面试方案生成任务/候选人简历/`；**BOSS 下载多为 PDF**，Agent 宜先 `py scripts/pdf_resume_to_md.py xxx.pdf` 生成同名 `.md` 再阅读（`pip install pymupdf`）；扫描件需 OCR
+- **输出**：`面试方案生成任务/输出/` 下**必须**含带日期的 **`面试方案_*.docx`**（正式交付）；可先写同名 `.md` 再运行 `py scripts/interview_plan_md_to_docx.py …md` 生成 Word（需 `pip install python-docx`）
 
 ## Core Pattern
 
@@ -70,12 +70,14 @@ Pattern: 扫码登录 → 筛选牛人 → 简历内容分析 → 打招呼 → 
 pip install "camoufox[geoip]" && camoufox fetch
 ```
 
+运行本仓库 CLI 与脚本时，文档命令统一为 **`py`**（Windows Python Launcher）；避免 `python`/`python3` 未在 PATH 中导致失败。非 Windows 可用 `python3` 等价替换。
+
 ## 工作流程
 
 ### 步骤1：登录
 
 ```bash
-python scripts/login.py
+py scripts/login.py
 ```
 
 - 打开 BOSS 招聘方登录页
@@ -85,7 +87,7 @@ python scripts/login.py
 ### 步骤2：搜索牛人
 
 ```bash
-python scripts/search_talent.py
+py scripts/search_talent.py
 ```
 
 - 进入"推荐牛人"
@@ -98,16 +100,16 @@ python scripts/search_talent.py
 
 ```bash
 # 推荐：统一 CLI（不写参数则默认本轮最多成功打招呼 20 人，不匹配则跳过继续扫）
-python boss greet
+py boss greet
 
 # 自定义上限：例如只要 10 个
-python boss greet --top 10
+py boss greet --top 10
 
 # 或直接跑脚本（等价）；也可用 BOSS_GREET_TOP=30 改默认
-python scripts/greet.py
+py scripts/greet.py
 
 # 不写 txt 报告（仅控制台 + llm_audit_log.jsonl）
-python scripts/greet.py --no-report
+py scripts/greet.py --no-report
 # 或环境变量：BOSS_GREET_NO_REPORT=1
 ```
 
@@ -120,9 +122,9 @@ python scripts/greet.py --no-report
 ### 步骤4：沟通列表「继续沟通」智能跟进（发消息后）
 
 ```bash
-python boss followup
-python boss followup --max 3
-python boss followup --dry-run
+py boss followup
+py boss followup --max 3
+py boss followup --dry-run
 ```
 
 - 与 `greet` **同一 Camoufox 持久化目录** `recruit_profile`，避免登录态不一致。  
@@ -180,20 +182,20 @@ Agent 分析候选人回复：
 
 ```bash
 # 登录
-python scripts/login.py
+py scripts/login.py
 
 # 搜索牛人 + 筛选（页数）
-python boss search 2
+py boss search 2
 
 # 打招呼前筛选 + 发送（默认凑满 20 个匹配）
-python scripts/greet.py
+py scripts/greet.py
 
 # 沟通列表跟进（与 greet 同 profile）
-python boss followup
-python boss followup --dry-run
+py boss followup
+py boss followup --dry-run
 
 # 一键运行
-python scripts/run_pipeline.py --keywords SEO --top 5
+py scripts/run_pipeline.py --keywords SEO --top 5
 ```
 
 ## 安全规则
@@ -231,7 +233,8 @@ boss-recruit/
 │   ├── chat_followup.py
 │   ├── run_pipeline.py
 │   ├── export_seo_competency_xlsx_to_md.py  # 可选：从 xlsx 重导素质项 md
-│   └── interview_plan_md_to_docx.py        # 面试方案 md → Word
+│   ├── interview_plan_md_to_docx.py        # 面试方案 md → Word
+│   └── pdf_resume_to_md.py                 # 简历 PDF → md（供 Agent 读）
 └── docs/
     └── REVERSE_ENGINEERING.md
 ```

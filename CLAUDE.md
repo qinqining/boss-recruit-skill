@@ -18,29 +18,31 @@
 pip install "camoufox[geoip]" && camoufox fetch
 ```
 
+文档与自动化命令统一使用 Windows **`py`** 启动器（避免仅安装 Python 但未将 `python`/`python3` 加入 PATH 时出现 `command not found`）。非 Windows 可改为 `python3` 等价调用。
+
 ## 工具
 
 项目路径下有 `boss` CLI，支持：
 
 ```bash
 # 登录
-python scripts/login.py
+py scripts/login.py
 
 # 搜索牛人（页数：默认 2）
-python boss search 2
+py boss search 2
 
 # 打招呼前筛选（核心功能）：规则判定 + 自动打招呼；默认凑满 20 个匹配项即停；报告 → reports/
-python boss greet
+py boss greet
 
-# 自定义人数上限：python boss greet --top 30
-# 等价：python scripts/greet.py [--no-report]；默认可由 BOSS_GREET_TOP 覆盖
+# 自定义人数上限：py boss greet --top 30
+# 等价：py scripts/greet.py [--no-report]；默认可由 BOSS_GREET_TOP 覆盖
 
 # 沟通列表「继续沟通」智能跟进（与 greet 同 profile，推荐）
-python boss followup
-python boss followup --dry-run
+py boss followup
+py boss followup --dry-run
 
 # 一键运行
-python scripts/run_pipeline.py --keywords SEO --top 5
+py scripts/run_pipeline.py --keywords SEO --top 5
 ```
 
 ## 工作流程
@@ -48,10 +50,10 @@ python scripts/run_pipeline.py --keywords SEO --top 5
 当用户说"帮我筛选牛人"或"自动打招呼"时：
 
 1. **确认需求** — 关键词（SEO/Google等）、数量、是否自动回复
-2. **登录** — `python scripts/login.py`（首次需要扫码）
-3. **搜索筛选** — `python boss greet`（默认最多成功打招呼 20；可选 `--top N`；报告见 `reports/`）
+2. **登录** — `py scripts/login.py`（首次需要扫码）
+3. **搜索筛选** — `py boss greet`（默认最多成功打招呼 20；可选 `--top N`；报告见 `reports/`）
 4. **展示结果** — 列出已打招呼的牛人
-5. **列表跟进** — `python boss followup`（可选，见 `AGENTS.md`）
+5. **列表跟进** — `py boss followup`（可选，见 `AGENTS.md`）
 
 ## 打招呼前筛选逻辑
 
@@ -85,7 +87,7 @@ Agent 分析候选人回复，决定：
 
 ## 离线任务：简历筛选评分
 
-**无浏览器**。按 `简历筛选评分任务/简历筛选任务.md` 执行。
+**无浏览器**。按 `简历筛选评分任务/简历筛选任务.md` 执行。候选人简历为 **PDF** 时，先 `py scripts/pdf_resume_to_md.py …` 转 `.md` 再分析（见 `SKILL.md`）。
 
 | 项 | 路径 |
 |----|------|
@@ -104,8 +106,8 @@ Agent 分析候选人回复，决定：
 | 任务说明 | `面试方案生成任务/任务.md` |
 | 助理向校准 | `面试方案生成任务/岗位层级说明.md` |
 | 素质表（Markdown） | `面试方案生成任务/岗位素质项/01_岗位与JD门槛.md`、`02_素质分档与面试母题.md` |
-| 候选人材料 | `面试方案生成任务/候选人简历/`（默认；或由用户指定路径） |
-| 产出 | `面试方案生成任务/输出/`：**必须**含带日期的 **`面试方案_*.docx`**（Word）；可先写 `.md` 再 `python scripts/interview_plan_md_to_docx.py <路径>.md`（`pip install python-docx`） |
+| 候选人材料 | `面试方案生成任务/候选人简历/`；**PDF 先** `py scripts/pdf_resume_to_md.py …pdf` **转 `.md` 再分析**（`pip install pymupdf`）；扫描件 OCR |
+| 产出 | `面试方案生成任务/输出/`：**必须**含带日期的 **`面试方案_*.docx`**（Word）；可先写 `.md` 再 `py scripts/interview_plan_md_to_docx.py <路径>.md`（`pip install python-docx`） |
 
 ## 频率限制
 
