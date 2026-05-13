@@ -5,13 +5,15 @@
 
 - 与 greet.py 一致：Camoufox 持久化 profile（recruit_profile）、固定 seed、排除 UBO。
 - 默认打开招聘端沟通页；若贵司实际入口不同，设环境变量 BOSS_RECRUIT_CHAT_URL。
-- 列表匹配：BOSS_FOLLOWUP_ROW_TEXT 支持多文案（逗号、|、； 分隔）。**新版 Web 沟通页常无「继续沟通」**，列表为 `[送达]`/`[已读]` 等；未设环境变量且 `--resume-only` 时会自动追加这些前缀。
-- 列表预览分三类：**送达/已读**（我方已发对方未回）、**对方发起**（无 [送达]/[已读] 且多为候选人首句）、**简历待同意**（对方要发附件简历，脚本会尝试点「同意」）。未设 `BOSS_FOLLOWUP_ROW_TEXT` 且 `--resume-only` 时用宽列表扫描以纳入「对方发起」行。
+- 列表匹配：BOSS_FOLLOWUP_ROW_TEXT 支持多文案（逗号、|、； 分隔）。**新版 Web 沟通页常无「继续沟通」**，`--resume-only` 时可能仍用 `[送达]`/`[已读]` 等词去**匹配到行**；默认对**归类为送达/已读**（预览任意位置含 `[送达]`/`[已读]`）的行**不发跟进**。要恢复旧逻辑：`BOSS_FOLLOWUP_SKIP_DELIVERED_READ=0`。
+- 列表预览分三类：**送达/已读**（行首标签，默认跳过发消息）、**对方发起**（无行首 [送达]/[已读] 且多为候选人首句）、**简历待同意**（对方要发附件简历，脚本会尝试点「同意」）。未设 `BOSS_FOLLOWUP_ROW_TEXT` 且 `--resume-only` 时用宽列表扫描。
 - 列表分区：可选 `BOSS_FOLLOWUP_LIST_TAB=沟通中` 或 `新招呼`；默认不切换（留在「全部」），避免误点导致列表为空。
 - 调试：`py scripts/chat_followup.py -v --dry-run` 或设 `BOSS_FOLLOWUP_VERBOSE=1`。
 - 留窗：`--dry-run` 或 `-v` 时默认会「按 Enter 再关浏览器」；正式无人值守请加 `--no-keep-open`。
 - 导出 DOM 线索（无需 F12）：`py scripts/chat_followup.py --dump-dom` — 打开沟通页后先在页面里**点开目标会话**，回到终端**按 Enter** 再写入 `reports/followup_dom_hints_*.json`；第二次 Enter 关浏览器（`--no-keep-open` 时导出后立刻关）。
 - 与 login 共用 `recruit_profile`：**不要**在另一 Camoufox 仍打开时启动本脚本，否则 `launch_persistent_context` 可能秒退；先关窗或关 `login_keep_open.py`。
+- 列表右侧时间：默认**只处理**「今日」样式（如 `14:21`、`刚刚`、`3分钟前`）；**跳过**「昨天」「前天」及 `MM-DD` / `YYYY-MM-DD` / `M月D日」等。设 `BOSS_FOLLOWUP_LIST_TIME_CHECK=0` 关闭该过滤。
+- 会话去重：`session_key` 优先用列表行上的 `data-geek-id` 等稳定属性；发消息后点左侧列表收回焦点；同一脚本运行内同一 key 只处理一次，避免仍停在同一聊天页时重复发。
 """
 
 from __future__ import annotations
@@ -243,9 +245,14 @@ def save_state(state: Dict[str, Any]) -> None:
     )
 
 
-def session_key(name: str, preview: str) -> str:
+def session_key(name: str, preview: str, *, stable_row_id: str = "") -> str:
+    """稳定 id 优先（行上 data-geek-id 等），避免发消息后列表预览变化导致同会话被当成新人。"""
     safe = re.sub(r"\s+", " ", (name or "未知").strip())[:40]
-    h = hashlib.md5(f"{safe}|{preview[:80]}".encode("utf-8", errors="ignore")).hexdigest()[:12]
+    sid = (stable_row_id or "").strip()
+    if sid:
+        h = hashlib.md5(f"{safe}|{sid}".encode("utf-8", errors="ignore")).hexdigest()[:12]
+        return f"{safe}|{h}"
+    h = hashlib.md5(f"{safe}|{preview[:120]}".encode("utf-8", errors="ignore")).hexdigest()[:12]
     return f"{safe}|{h}"
 
 
@@ -296,6 +303,9 @@ def classify_row_preview(preview: str) -> str:
     """
     根据列表行副文案（预览）分为三类 + unknown。
     顺序：先简历待同意，再我方送达/已读，再对方发起。
+
+    注意：preview 常为整行 inner_text（姓名、职位在前，「您好」在后的候选人首句），
+    不能仅用 startswith("您好") 判断对方发起。
     """
     p = (preview or "").replace("\n", " ").strip()
     if len(p) < 4:
@@ -317,8 +327,20 @@ def classify_row_preview(preview: str) -> str:
     if "[送达]" not in p and "[已读]" not in p:
         if p.startswith("您好") or p.startswith("你好"):
             return ROW_KIND_CANDIDATE_INITIATED
-        head = p[:48]
-        if "我对" in head or "感兴趣" in head or "应届生" in head or "一周" in head:
+        # 姓名/职位在前的列表行：「您好，…」「你好，…」多出现在行中后部
+        if re.search(r"您好[,，、\s]", p) or re.search(r"你好[,，、\s]", p):
+            return ROW_KIND_CANDIDATE_INITIATED
+        head = p[:96]
+        if (
+            "我对" in head
+            or "感兴趣" in head
+            or "应届生" in head
+            or "一周" in head
+            or "在吗" in head
+            or "请问" in head
+            or "方便沟通" in head
+            or "看到招聘" in head
+        ):
             return ROW_KIND_CANDIDATE_INITIATED
     return ROW_KIND_UNKNOWN
 
@@ -918,6 +940,174 @@ def _row_name_preview(row) -> Tuple[str, str]:
     return name, preview
 
 
+def _row_stable_session_id(row: Any) -> str:
+    """从列表行 DOM 取 Boss 常用稳定 id，避免仅用预览文案做 session_key。"""
+    attrs = (
+        "data-geek-id",
+        "data-encryptuid",
+        "data-encrypt-user-id",
+        "data-id",
+        "data-conversation-id",
+        "data-conversationid",
+        "data-uid",
+        "data-iid",
+    )
+    for a in attrs:
+        try:
+            v = row.get_attribute(a)
+            if v and str(v).strip():
+                return f"{a}={str(v).strip()[:120]}"
+        except Exception:
+            continue
+    try:
+        got = row.evaluate(
+            """(node) => {
+              let el = node;
+              for (let d = 0; d < 10 && el; d++) {
+                if (!el.getAttribute) { el = el.parentElement; continue; }
+                for (const k of ['data-geek-id','data-encryptuid','data-id',
+                  'data-conversation-id','data-uid']) {
+                  const v = el.getAttribute(k);
+                  if (v && String(v).trim()) return k + '=' + String(v).trim().slice(0, 120);
+                }
+                el = el.parentElement;
+              }
+              return '';
+            }"""
+        )
+        if isinstance(got, str) and got.strip():
+            return got.strip()[:200]
+    except Exception:
+        pass
+    return ""
+
+
+def _try_refocus_left_chat_list(list_root: Any, *, verbose: bool = False) -> None:
+    """发消息后切回左侧列表，减少下一行仍停留在同一聊天页导致误点同一人。"""
+    if list_root is None:
+        return
+    for sel in (".user-list", "[class*='user-list']", "[class*='main-list']"):
+        try:
+            loc = list_root.locator(sel).first
+            if not loc.count():
+                continue
+            if not loc.is_visible(timeout=900):
+                continue
+            loc.click(timeout=2500, position={"x": 24, "y": 72})
+            time.sleep(0.28)
+            if verbose:
+                print(f"[followup][dbg] 已点击左侧列表以收回焦点（{sel!r}）")
+            return
+        except Exception as ex:
+            if verbose:
+                print(f"[followup][dbg] refocus list {sel!r}: {ex!r}")
+            continue
+
+
+_ROW_LIST_TIME_SUBS = (
+    "[class*='time']",
+    "[class*='Time']",
+    ".time",
+    "[class*='item-time']",
+    "[class*='message-time']",
+    "[class*='conversation-time']",
+    "[class*='chat-time']",
+    "[class*='send-time']",
+    "[class*='list-time']",
+    ".boss-chat-item-time",
+)
+
+
+def _list_time_filter_enabled() -> bool:
+    return os.environ.get("BOSS_FOLLOWUP_LIST_TIME_CHECK", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _skip_delivered_read_followup() -> bool:
+    """列表/预览中含 [送达]/[已读] 且归类为送达/已读时，默认不再发跟进（inner_text 未必以标签开头）。"""
+    return os.environ.get("BOSS_FOLLOWUP_SKIP_DELIVERED_READ", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _row_list_time_caption(row: Any) -> str:
+    """读取会话行右侧时间文案（Boss 常见为 HH:mm=今日，「昨天」=非今日）。"""
+    for sub in _ROW_LIST_TIME_SUBS:
+        try:
+            loc = row.locator(sub).last
+            if not loc.count():
+                continue
+            t = (loc.inner_text(timeout=900) or "").strip()
+            t = re.sub(r"\s+", " ", t)
+            if t and len(t) <= 24:
+                return t
+        except Exception:
+            continue
+    try:
+        full = (row.inner_text(timeout=1800) or "").replace("\n", " ")
+    except Exception:
+        return ""
+    full = re.sub(r"\s+", " ", full).strip()
+    for needle in ("昨天", "前天", "大前天"):
+        if needle in full:
+            return needle
+    m = re.search(r"\d{4}-\d{1,2}-\d{1,2}", full)
+    if m:
+        return m.group(0)
+    m = re.search(r"\d{1,2}月\d{1,2}日", full)
+    if m:
+        return m.group(0)
+    m = re.search(r"(?<![\d])(\d{1,2}-\d{1,2})(?![\d])", full)
+    if m:
+        return m.group(1)
+    times = re.findall(r"(?<![\d])(\d{1,2}:\d{2})(?![\d])", full)
+    if times:
+        return times[-1]
+    if "刚刚" in full:
+        return "刚刚"
+    m = re.search(r"\d{1,3}\s*分钟前", full)
+    if m:
+        return m.group(0).replace(" ", "")
+    m = re.search(r"\d{1,2}\s*小时前", full)
+    if m:
+        return m.group(0).replace(" ", "")
+    return ""
+
+
+def _should_process_row_by_list_time(caption: str) -> Tuple[bool, str]:
+    """
+    是否因「列表时间」而应处理本会话行。
+    True：今日常见展示；False：昨日或日历日期等。
+    """
+    c = (caption or "").strip()
+    if not c:
+        return True, "未读到时间（仍处理，避免漏抓）"
+    if "昨天" in c or "前天" in c or "大前天" in c:
+        return False, "列表含昨天/前天"
+    if "今天" in c or "今日" in c:
+        return True, "显式今日"
+    if re.search(r"\d{4}-\d{1,2}-\d{1,2}", c):
+        return False, "完整日期"
+    if re.search(r"\d{1,2}月\d{1,2}日", c):
+        return False, "月日格式"
+    if re.match(r"^\d{1,2}-\d{1,2}$", c):
+        return False, "月-日（非今日）"
+    if c == "刚刚" or "分钟前" in c or "小时前" in c:
+        return True, "相对时间（当日）"
+    if re.match(r"^\d{1,2}:\d{2}$", c):
+        return True, "HH:mm（Boss 列表通常为今日）"
+    if len(c) <= 24:
+        return True, f"未识别形态 {c!r}（仍处理）"
+    return True, "仍处理"
+
+
 def _click_resume_consent_agree(page, *, dry_run: bool, verbose: bool) -> bool:
     """对方请求发附件简历时，尝试点击「同意」类按钮。"""
     if dry_run:
@@ -1505,6 +1695,17 @@ def run_followup(
         f"[followup] 列表状态文案（多选任一命中）: {markers!r} | "
         f"分隔符：逗号 / | / ；"
     )
+    if _list_time_filter_enabled():
+        print(
+            "[followup] 列表时间过滤：已开启（跳过「昨天」及月日等；"
+            "仅处理今日类如 HH:mm / 刚刚）。"
+            "关闭：BOSS_FOLLOWUP_LIST_TIME_CHECK=0"
+        )
+    if _skip_delivered_read_followup():
+        print(
+            "[followup] 送达/已读过滤：已开启（归类为「送达/已读」即预览含 [送达]/[已读] 则不发跟进）。"
+            "关闭：BOSS_FOLLOWUP_SKIP_DELIVERED_READ=0"
+        )
     print(
         f"[followup] 列表首等待 {FOLLOWUP_LIST_WAIT_SEC:.0f}s，"
         f"轮询最多 {FOLLOWUP_LIST_POLL_TRIES} 次 / 间隔 {FOLLOWUP_LIST_POLL_STEP_SEC}s"
@@ -1611,6 +1812,7 @@ def run_followup(
         idx = 0
         handled = 0
         agree_clicks = 0
+        processed_session_keys: set[str] = set()
         while handled < max_items:
             if list_source == "broad":
                 rows, list_root = _find_broad_session_rows(page, verbose=False)
@@ -1646,6 +1848,18 @@ def run_followup(
                 continue
 
             name, preview = _row_name_preview(row)
+            if _list_time_filter_enabled():
+                time_cap = _row_list_time_caption(row)
+                ok_time, time_reason = _should_process_row_by_list_time(time_cap)
+                if not ok_time:
+                    print(
+                        f"    [skip] {name} 列表时间「{time_cap or '?'}」→ {time_reason}"
+                    )
+                    continue
+                if v and time_cap:
+                    print(
+                        f"    [followup][dbg] 列表时间「{time_cap}」→ {time_reason}"
+                    )
             kind = classify_row_preview(preview)
             print(f"    [分类] {name} → {_row_kind_label_cn(kind)}")
             if kind == ROW_KIND_UNKNOWN:
@@ -1653,7 +1867,22 @@ def run_followup(
                     print(f"    [skip] {name} 预览未归入三类，跳过")
                 continue
 
-            key = session_key(name, preview)
+            if _skip_delivered_read_followup() and kind == ROW_KIND_OUTBOUND_WAITING:
+                print(
+                    f"    [skip] {name} 列表归类为送达/已读（预览中含 [送达]/[已读]），不发跟进"
+                )
+                continue
+
+            row_uid = _row_stable_session_id(row)
+            key = session_key(name, preview, stable_row_id=row_uid)
+            if key in processed_session_keys:
+                print(
+                    f"    [skip] {name} 本轮已处理过该会话（去重），避免停留在同一聊天页时重复发送"
+                )
+                continue
+            if v and row_uid:
+                print(f"[followup][dbg] 行稳定 id: {row_uid[:120]!r}")
+
             rec = sessions.get(key) or {}
             last_day = rec.get("last_day")
             rounds = int(rec.get("rounds", 0))
@@ -1731,6 +1960,7 @@ def run_followup(
                 if ok_agree:
                     agree_clicks += 1
                     handled += 1
+                    processed_session_keys.add(key)
                     if not dry_run:
                         rec["last_day"] = today
                         rec["rounds"] = rounds + 1
@@ -1745,7 +1975,8 @@ def run_followup(
                     time.sleep(pause)
                 try:
                     page.keyboard.press("Escape")
-                    time.sleep(0.5)
+                    time.sleep(0.45)
+                    _try_refocus_left_chat_list(list_root, verbose=v)
                 except Exception:
                     pass
                 continue
@@ -1770,6 +2001,18 @@ def run_followup(
                     pass
                 continue
 
+            if _skip_delivered_read_followup() and effective_kind == ROW_KIND_OUTBOUND_WAITING:
+                print(
+                    f"    [skip] {name} 有效类型仍为送达/已读，不发跟进（已打开会话则关闭）"
+                )
+                try:
+                    page.keyboard.press("Escape")
+                    time.sleep(0.45)
+                    _try_refocus_left_chat_list(list_root, verbose=v)
+                except Exception:
+                    pass
+                continue
+
             msg = build_message(cfg, rounds, name, chat_snippet, resume_only=resume_eff)
             print(
                 f"\n  [会话] {name} | 类型={_row_kind_label_cn(effective_kind)} | "
@@ -1780,6 +2023,7 @@ def run_followup(
             if ok:
                 handled += 1
                 sent += 1
+                processed_session_keys.add(key)
                 if not dry_run:
                     rec["last_day"] = today
                     rec["rounds"] = rounds + 1
@@ -1795,8 +2039,9 @@ def run_followup(
             try:
                 page.keyboard.press("Escape")
                 time.sleep(0.5)
+                _try_refocus_left_chat_list(list_root, verbose=v)
                 if v:
-                    print("[followup][dbg] 已按 Escape 尝试关闭浮层")
+                    print("[followup][dbg] 已按 Escape 尝试关闭浮层并切回左侧列表")
             except Exception:
                 pass
 
