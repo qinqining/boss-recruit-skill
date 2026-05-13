@@ -7,7 +7,9 @@ Boss Recruit CLI - 招聘方自动化入口（技能根目录下执行）
   python boss greet                       # 同上，默认最多成功打招呼 20 人（可 BOSS_GREET_TOP=30）
   python boss greet --top 15               # 自定义上限
   python boss greet --no-report            # 不写判定报告
-  python boss monitor --interval 30      # 消息监控
+  python boss monitor --interval 30      # 消息监控（旧版 async+cookie）
+  python boss followup [--max 5]        # 沟通列表「继续沟通」智能跟进（推荐，与 greet 同 profile）
+  python boss followup --dry-run         # 只打印将发送的文案
   python boss run --keywords SEO        # 一键运行
 """
 
@@ -38,6 +40,10 @@ def main():
     elif cmd == "monitor":
         extra = sys.argv[2:] if len(sys.argv) > 2 else ["--interval", "30"]
         subprocess.run([sys.executable, str(scripts_dir / "chat_auto.py")] + extra)
+
+    elif cmd == "followup":
+        extra = sys.argv[2:] if len(sys.argv) > 2 else []
+        subprocess.run([sys.executable, str(scripts_dir / "chat_followup.py")] + extra)
 
     elif cmd == "run":
         extra = sys.argv[2:] if len(sys.argv) > 2 else ["--keywords", "SEO", "--top", "5"]

@@ -33,7 +33,11 @@ python boss greet
 # 自定义人数上限：python boss greet --top 30
 # 等价：python scripts/greet.py [--no-report]；默认可由 BOSS_GREET_TOP 覆盖
 
-# 消息监控 + 智能回复
+# 沟通列表「继续沟通」智能跟进（与 greet 同 profile，推荐）
+python boss followup
+python boss followup --dry-run
+
+# 消息监控（旧版）
 python scripts/chat_auto.py --interval 30
 
 # 一键运行

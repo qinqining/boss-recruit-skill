@@ -16,8 +16,13 @@ from datetime import datetime
 from typing import Optional
 from camoufox import Camoufox
 from camoufox import launch_options
+from camoufox.addons import DefaultAddons
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_scripts_dir = os.path.dirname(os.path.abspath(__file__))
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+from boss_login_probe import check_login, probe_logged_in
 
 # 本地缓存路径（提前定义，供 .env 读取使用）
 SCRIPT_DIR = Path(__file__).parent.parent
@@ -26,8 +31,36 @@ AUDIT_LOG_FILE = SCRIPT_DIR / "llm_audit_log.jsonl"
 REPORTS_DIR = SCRIPT_DIR / "reports"
 GREET_RUN_INDEX_FILE = REPORTS_DIR / "greet_run_index.json"
 
-# 本轮最多「成功发出」的打招呼次数：会一直扫列表直到凑满或没有更多卡片（可用 BOSS_GREET_TOP 或 --top 覆盖）
-DEFAULT_GREET_TOP = int(os.environ.get("BOSS_GREET_TOP", "20"))
+DEFAULT_GREET_TOP_CAP = 20
+
+
+def resolve_greet_top(cli_top: Optional[int]) -> Optional[int]:
+    """
+    成功发出「打招呼」的人数上限；凑满即停。
+    返回 None 表示不限制（仅受推荐列表与滚动停滞约束）。
+    CLI：`--top 0` 表示不限制；省略则从环境变量读取，默认 20。
+    环境变量 BOSS_GREET_TOP：未设置或空 → 20；≤0 → 不限制。
+    """
+    if cli_top is not None:
+        return None if cli_top <= 0 else cli_top
+    raw = os.environ.get("BOSS_GREET_TOP", "").strip()
+    if not raw:
+        return DEFAULT_GREET_TOP_CAP
+    try:
+        v = int(raw)
+    except ValueError:
+        return DEFAULT_GREET_TOP_CAP
+    return None if v <= 0 else v
+
+
+def _top_phrase(top: Optional[int]) -> str:
+    return "不限制" if top is None else str(top)
+
+
+# 报告中「在线简历/侧栏」正文最长字符（可按需加大）
+REPORT_RESUME_MAX_CHARS = int(os.environ.get("BOSS_GREET_REPORT_RESUME_CHARS", "16000"))
+REPORT_CARD_MAX_CHARS = int(os.environ.get("BOSS_GREET_REPORT_CARD_CHARS", "2000"))
+
 # 滑到列表底部后卡片数连续若干次不增加则判定「暂无更多推荐」（避免死循环）
 GREET_LIST_SCROLL_STALL_MAX = int(os.environ.get("BOSS_GREET_LIST_SCROLL_STALL", "5"))
 
@@ -65,7 +98,7 @@ def _allocate_greet_run_sequence() -> int:
     return seq
 
 
-def init_rule_report_session(top: int, argv_summary: str = "") -> None:
+def init_rule_report_session(top: Optional[int], argv_summary: str = "") -> None:
     """每次运行创建一个带时间戳的 txt，便于回看判定结果。"""
     global _RULE_REPORT_PATH, _RULE_REPORT_RUN_SEQ, _RULE_REPORT_DATE_LINE
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -80,11 +113,15 @@ def init_rule_report_session(top: int, argv_summary: str = "") -> None:
         / f"greet_rule_report_run{_RULE_REPORT_RUN_SEQ:04d}_{ts}.txt"
     )
     with open(_RULE_REPORT_PATH, "w", encoding="utf-8") as f:
-        f.write("Boss Recruit — 简历规则判定报告\n")
+        f.write("Boss Recruit — 在线简历抓取与规则判定报告\n")
+        f.write(
+            "说明: 运行过程中按候选人追加「卡片摘要 + 在线简历摘录 + 匹配/不匹配」；"
+            "文末为人数汇总。\n"
+        )
         f.write(f"报告日期: {_RULE_REPORT_DATE_LINE}\n")
         f.write(f"任务序号: 第 {_RULE_REPORT_RUN_SEQ} 次运行（技能目录累计，见 reports/greet_run_index.json）\n")
         f.write(f"生成时间: {now.isoformat(timespec='seconds')}\n")
-        f.write(f"计划打招呼上限 top={top}\n")
+        f.write(f"计划成功打招呼上限（凑满即停）: {_top_phrase(top)}\n")
         if argv_summary:
             f.write(f"命令行: {argv_summary}\n")
         f.write("=" * 72 + "\n\n")
@@ -118,10 +155,11 @@ def append_rule_report(
     ]
     if tag:
         lines.append(f"类型: {tag}")
+    verdict = "匹配" if result.get("is_match") else "不匹配"
     lines.extend(
         [
             f"候选人: {candidate_name}",
-            f"is_match: {result.get('is_match')}",
+            f"判定: {verdict}",
             f"score: {result.get('score')}",
             f"reason: {result.get('reason')}",
         ]
@@ -137,14 +175,16 @@ def append_rule_report(
     if result.get("score_formula"):
         lines.append(f"分值: {result['score_formula']}")
     card_snip = (card_text or "").replace("\r", "").strip()
-    if len(card_snip) > 600:
-        card_snip = card_snip[:600] + "…"
+    if len(card_snip) > REPORT_CARD_MAX_CHARS:
+        card_snip = card_snip[:REPORT_CARD_MAX_CHARS] + "…"
     lines.append(f"卡片摘要:\n{card_snip}")
     sum_snip = (summary_text or "").replace("\r", "").strip()
-    if len(sum_snip) > 1200:
-        sum_snip = sum_snip[:1200] + "…"
+    if len(sum_snip) > REPORT_RESUME_MAX_CHARS:
+        sum_snip = sum_snip[:REPORT_RESUME_MAX_CHARS] + "…"
     if sum_snip:
-        lines.append(f"简历/侧栏摘要:\n{sum_snip}")
+        lines.append(f"在线简历/侧栏正文（节选）:\n{sum_snip}")
+    elif tag not in ("卡片硬过滤",):
+        lines.append("在线简历/侧栏正文（节选）: （空）")
     lines.append("")
     try:
         with open(_RULE_REPORT_PATH, "a", encoding="utf-8") as f:
@@ -153,24 +193,50 @@ def append_rule_report(
         print(f"[report] WARN 写入报告失败: {e}")
 
 
-def finalize_rule_report_session(greeted: list, stopped_reason: str = "") -> None:
-    """运行结束时写入汇总。"""
+def finalize_rule_report_session(
+    greeted: list,
+    stopped_reason: str = "",
+    *,
+    stats: Optional[dict] = None,
+    top_target: Optional[int] = None,
+) -> None:
+    """运行结束时写入汇总（人数统计 + 成功打招呼名单）。"""
     if _RULE_REPORT_PATH is None:
         return
+    stats = stats or {}
     try:
         with open(_RULE_REPORT_PATH, "a", encoding="utf-8") as f:
             f.write("\n" + "=" * 72 + "\n")
+            f.write("【本轮汇总】\n")
             f.write(f"报告日期: {_RULE_REPORT_DATE_LINE}\n")
             f.write(f"任务序号: 第 {_RULE_REPORT_RUN_SEQ} 次运行\n")
             f.write(f"结束时间: {datetime.now().isoformat(timespec='seconds')}\n")
-            f.write(f"实际发出招呼人数: {len(greeted)}\n")
+            cg = int(stats.get("card_gate_reject", 0))
+            nr = int(stats.get("no_resume", 0))
+            rm = int(stats.get("rule_match", 0))
+            rnm = int(stats.get("rule_nonmatch", 0))
+            gf = int(stats.get("greet_fail", 0))
+            f.write(f"· 卡片门槛拦截（未展开在线简历）: {cg} 人\n")
+            f.write(f"· 未能获取在线简历正文: {nr} 人\n")
+            f.write(f"· 规则判定「匹配」: {rm} 人\n")
+            f.write(f"· 规则判定「不匹配」（含去重跳过、侧栏内硬过滤等）: {rnm} 人\n")
+            f.write(f"· 判定匹配但打招呼操作失败: {gf} 人\n")
+            f.write(f"· 成功发出打招呼: {len(greeted)} 人")
+            if top_target is not None:
+                f.write(f"（本轮目标 {_top_phrase(top_target)}，凑满即停）")
+            f.write("\n")
+            judged = cg + nr + rm + rnm
+            f.write(f"· 上述分项合计（便于核对）: {judged} 人次\n")
+            f.write("\n成功打招呼名单:\n")
             if greeted:
                 for g in greeted:
                     f.write(
                         f"  - {g.get('name','?')} | score={g.get('score')} | {g.get('reason','')}\n"
                     )
+            else:
+                f.write("  （无）\n")
             if stopped_reason:
-                f.write(f"备注: {stopped_reason}\n")
+                f.write(f"\n备注: {stopped_reason}\n")
     except OSError as e:
         print(f"[report] WARN 写入汇总失败: {e}")
 
@@ -1694,23 +1760,6 @@ def get_profile_dir():
     profile_dir.mkdir(parents=True, exist_ok=True)
     return profile_dir
 
-def check_login(page) -> bool:
-    """DOM 元素检测登录状态"""
-    try:
-        selectors = [".user-name", ".header-user-avatar"]
-        for sel in selectors:
-            try:
-                el = page.wait_for_selector(sel, timeout=2000)
-                if el:
-                    text = el.inner_text().strip() if el.inner_text() else ""
-                    if len(text) > 0:
-                        return True
-            except:
-                continue
-        return False
-    except:
-        return False
-
 def get_filter_config():
     """获取筛选配置：关键词 + 年龄限制"""
     config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
@@ -1835,12 +1884,10 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
     打招呼前筛选 + 发送
 
     使用 persistent_context + 固定 seed，扫码一次永久免登。
-    top: 本轮最多成功打招呼的人数；默认 DEFAULT_GREET_TOP（20）。不匹配的人会跳过，继续扫下一张直到凑满。
+    top: 本轮「成功发出打招呼」人数上限，默认 20（见 resolve_greet_top）；None 表示不限制。
     write_report: 是否在项目 reports/ 下写入本轮判定 txt（环境变量 BOSS_GREET_NO_REPORT=1 等价关闭）。
     """
-    if top is None:
-        top = DEFAULT_GREET_TOP
-
+    top = resolve_greet_top(top)
     print("[START] Greeting filter begins...")
 
     no_report_env = os.environ.get("BOSS_GREET_NO_REPORT", "").lower() in (
@@ -1860,7 +1907,7 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
         f"[CONFIG] Filter: keywords={keywords}, max_age={max_age}岁, "
         f"rule_min_job_end={RULE_MIN_LAST_JOB_END[0]}.{RULE_MIN_LAST_JOB_END[1]:02d}, "
         f"max_gap_months={RULE_MAX_GAP_MONTHS}, "
-        f"本轮成功打招呼上限 top={top}"
+        f"本轮成功打招呼上限（凑满即停）top={_top_phrase(top)}"
     )
 
     # 预生成固定指纹
@@ -1875,6 +1922,7 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
         fingerprint=fp,
         window_size=(1280, 720),
         i_know_what_im_doing=True,
+        exclude_addons=[DefaultAddons.UBO],
     )
     opts.update({
         "persistent_context": True,
@@ -1896,21 +1944,32 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                          persistent_context=persistent_context, debug=debug, **kwargs)
     sync_api.NewBrowser = patched
 
-    browser = Camoufox(from_options=opts)
-    context = browser.__enter__()
-    page = context.pages[0] if context.pages else context.new_page()
-
-    greeted = []
+    greeted: list = []
     greet_count = 0
     stopped_note = ""
+    report_stats = {
+        "card_gate_reject": 0,
+        "no_resume": 0,
+        "rule_match": 0,
+        "rule_nonmatch": 0,
+        "greet_fail": 0,
+    }
+    browser = None
 
     try:
+        browser = Camoufox(from_options=opts)
+        context = browser.__enter__()
+        page = context.pages[0] if context.pages else context.new_page()
         # 进入推荐牛人页面
         page.goto("https://www.zhipin.com/web/geek/recommend", wait_until="domcontentloaded")
+        try:
+            page.wait_for_load_state("load", timeout=15000)
+        except Exception:
+            pass
         time.sleep(2)
 
-        # 检查登录状态（DOM 检测）
-        if not check_login(page):
+        # 检查登录状态（DOM + 多次探测，避免 SPA 慢渲染误判未登录）
+        if not probe_logged_in(page, label="recommend"):
             print("[login] Not logged in, going to login page...")
             page.goto("https://www.zhipin.com/web/geek/login", wait_until="domcontentloaded")
             # 等待扫码登录
@@ -1986,10 +2045,10 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
         list_scroll_stall = 0
         wapi_sniffer = _ResumeWapiSniffer(page)
         print(
-            f"[talent] 目标成功打招呼 {top} 人：将遍历卡片并在 iframe 内滚动加载更多，"
+            f"[talent] 目标成功打招呼 {_top_phrase(top)} 人：将遍历卡片并在 iframe 内滚动加载更多，"
             f"直至凑满或连续 {GREET_LIST_SCROLL_STALL_MAX} 次滚动仍无新卡片"
         )
-        while greet_count < top:
+        while top is None or greet_count < top:
             if frame is None:
                 break
 
@@ -2007,8 +2066,8 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                             break
                     if card_count == 0:
                         print("[talent] iframe 内滚动后仍无卡片，结束任务")
-                        stopped_note = (
-                            stopped_note or "推荐列表无卡片，未满 top"
+                        stopped_note = stopped_note or (
+                            f"推荐列表无卡片，未满目标 {_top_phrase(top)}"
                         )
                         break
 
@@ -2029,12 +2088,13 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                         list_scroll_stall = 0
                     last_count_after_list_scroll = new_count
                     if list_scroll_stall >= GREET_LIST_SCROLL_STALL_MAX:
+                        tgt = _top_phrase(top)
                         print(
                             "[talent] 已达滚动停滞上限（Boss 暂无更多推荐或需换筛选），"
-                            f"当前成功打招呼 {greet_count}/{top}"
+                            f"当前成功打招呼 {greet_count}/{tgt}"
                         )
                         stopped_note = stopped_note or (
-                            f"列表滚动无新卡片，未满 top={top}（已打招呼 {greet_count}）"
+                            f"列表滚动无新卡片，未满目标 {tgt}（已打招呼 {greet_count}）"
                         )
                         break
                     card_index = 0
@@ -2056,6 +2116,7 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
 
                 hdr_reject, hdr_reason = card_header_gate(card_text, max_age)
                 if hdr_reject:
+                    report_stats["card_gate_reject"] += 1
                     r = {"is_match": False, "score": 0, "reason": hdr_reason}
                     print(f"    [FILTER] {hdr_reason}（不调LLM，未打开简历侧栏）")
                     log_audit(name, card_text, "", r)
@@ -2133,6 +2194,7 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                     result = evaluate_resume(name, card_text, resume_text, max_age=max_age)
 
                     if result.get("is_match"):
+                        report_stats["rule_match"] += 1
                         print(
                             f"    [RESULT] 是 - 匹配(score={result.get('score')}) - "
                             f"等待{GREET_AFTER_MATCH_WAIT_SEC:.0f}秒后点击打招呼"
@@ -2150,14 +2212,17 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                             )
                             greet_count += 1
                         except Exception as e:
+                            report_stats["greet_fail"] += 1
                             print(f"    [FAIL] Greet failed: {e}")
                     else:
+                        report_stats["rule_nonmatch"] += 1
                         print(f"    [RESULT] 否 - 不匹配(score={result.get('score')}): {result.get('reason')}")
                 else:
                     print(
                         "    [WARN] No resume sidebar text, skip rules。"
                         "若侧栏已显示仍为0：检查 iframe / 选择器。"
                     )
+                    report_stats["no_resume"] += 1
                     nr = {"is_match": False, "score": 0, "reason": "无侧栏文本，无法规则校验"}
                     log_audit(name, card_text, "", nr)
                     append_rule_report(name, card_text, "", nr, tag="无侧栏文本")
@@ -2183,18 +2248,31 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                 continue
 
         print(f"\n[OK] Done! Greeted {len(greeted)} people")
-        if len(greeted) < top:
+        print(
+            f"[STATS] 卡片门槛拦截 {report_stats['card_gate_reject']} | "
+            f"无简历正文 {report_stats['no_resume']} | "
+            f"规则匹配 {report_stats['rule_match']} | "
+            f"规则不匹配 {report_stats['rule_nonmatch']} | "
+            f"匹配但打招呼失败 {report_stats['greet_fail']}"
+        )
+        if top is not None and len(greeted) < top:
             print(
-                f"[INFO] 未满上限 top={top}：常见原因为匹配人数不足、"
-                "或推荐列表滚动后仍无新卡片（详见 [talent] 日志与报告备注）"
+                f"[INFO] 未满目标 {_top_phrase(top)}：常见原因为匹配人数不足、"
+                "或推荐列表滚动后仍无新卡片（详见 [talent] 日志与报告文末汇总）"
             )
 
     except Exception as e:
         stopped_note = str(e)
         print(f"[FAIL] 执行失败: {e}")
     finally:
-        finalize_rule_report_session(greeted, stopped_note)
-        browser.__exit__(None, None, None)
+        finalize_rule_report_session(
+            greeted,
+            stopped_note,
+            stats=report_stats,
+            top_target=top,
+        )
+        if browser is not None:
+            browser.__exit__(None, None, None)
 
     return greeted
 
@@ -2207,11 +2285,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--top",
         type=int,
-        default=DEFAULT_GREET_TOP,
+        default=None,
         metavar="N",
         help=(
-            "本轮最多成功打招呼的人数（默认 %(default)s，可由环境变量 BOSS_GREET_TOP 覆盖）；"
-            "会先跳过不匹配卡片，直到凑满 N 或列表用尽"
+            f"本轮最多成功打招呼的人数（省略则默认 {DEFAULT_GREET_TOP_CAP}，或读 BOSS_GREET_TOP；"
+            "0=不限制）；跳过不匹配卡片直至凑满或列表用尽"
         ),
     )
     parser.add_argument(

@@ -96,17 +96,28 @@ python scripts/greet.py --no-report
 - 每条判定写入 **`reports/greet_rule_report_run序号_YYYYMMDD_HHMMSS.txt`**（UTF-8）；文首/文末含 **报告日期** 与 **第 N 次运行**（序号在 `reports/greet_run_index.json`）
 - 审计 JSONL 仍为根目录 `llm_audit_log.jsonl`
 
-### 步骤4：消息监控 + 智能回复
+### 步骤4：沟通列表「继续沟通」智能跟进（发消息后）
+
+```bash
+python boss followup
+python boss followup --max 3
+python boss followup --dry-run
+```
+
+- 与 `greet` **同一 Camoufox 持久化目录** `recruit_profile`，避免登录态不一致。  
+- 默认打开 **`/web/boss/chat`**；若入口不同，设置环境变量 `BOSS_RECRUIT_CHAT_URL`。  
+- 在列表中查找含 **「继续沟通」** 的会话，依次打开并发送**短跟进**（公司地址/通勤、经历追问、索要 PDF 简历），轮次与上限见根目录 **`AGENTS.md`**。  
+- 状态记录在 `reports/followup_state.json`（防同日对同一人刷太多条）。
+
+### 步骤5：消息监控（旧版，可选）
 
 ```bash
 python scripts/chat_auto.py --interval 30
 ```
 
-- 每30秒检查新消息
-- Agent 分析回复内容，判断：
-  - **invite**：发送面试邀请
-  - **continue**：继续跟进
-  - **pass**：标记不合适
+- 基于 **Cookie JSON** 的异步轮询，与 `greet` 的 profile 体系**不一定一致**；新跟进请优先用 **步骤4**。
+
+更多 Agent 话术与安全边界见 **`AGENTS.md`**。
 
 ## 简历筛选规则
 
@@ -164,7 +175,11 @@ python boss search 2
 # 打招呼前筛选 + 发送（默认凑满 20 个匹配）
 python scripts/greet.py
 
-# 消息监控 + 智能回复
+# 沟通列表跟进（与 greet 同 profile）
+python boss followup
+python boss followup --dry-run
+
+# 消息监控（旧版）
 python scripts/chat_auto.py --interval 30
 
 # 一键运行

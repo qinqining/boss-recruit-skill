@@ -26,6 +26,7 @@ def main():
     print(f"[TEST] UA: {fp.navigator.userAgent[:70]}...")
 
     from camoufox import Camoufox, launch_options
+    from camoufox.addons import DefaultAddons
     import camoufox.sync_api as sync_api
 
     profile_dir = Path(__file__).parent.parent / "recruit_profile"
@@ -38,6 +39,7 @@ def main():
         fingerprint=fp,
         window_size=(1280, 720),
         i_know_what_im_doing=True,
+        exclude_addons=[DefaultAddons.UBO],
     )
     opts.update({
         "persistent_context": True,

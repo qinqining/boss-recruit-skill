@@ -4,7 +4,7 @@ Boss Recruit - 扫码登录
 
 Cookie 与指纹绑定:
   开启 persistent_context=True + 固定 user_data_dir + 固定 seed，
-  实现扫码一次永久免登（类似 boss-auto-job 的机制）。
+  实现扫码一次永久免登
 """
 
 import asyncio
@@ -16,6 +16,12 @@ import random
 from pathlib import Path
 from camoufox import Camoufox
 from camoufox import launch_options
+from camoufox.addons import DefaultAddons
+
+_scripts_dir = os.path.dirname(os.path.abspath(__file__))
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+from boss_login_probe import check_login
 
 COOKIE_PATH = os.path.expanduser("~/.agent-browser/auth/boss-recruit.json")
 FIXED_SEED = "boss-recruit-agent-2026"  # 固定种子保证指纹一致
@@ -31,25 +37,6 @@ def get_profile_dir():
     profile_dir = Path(__file__).parent.parent / "recruit_profile"
     profile_dir.mkdir(parents=True, exist_ok=True)
     return profile_dir
-
-def check_login(page) -> bool:
-    """DOM 元素检测登录状态（不依赖 URL）
-    必须同时满足：元素存在 AND 元素有实际内容（不是空壳）"""
-    try:
-        selectors = [".user-name", ".header-user-avatar"]
-        for sel in selectors:
-            try:
-                el = page.wait_for_selector(sel, timeout=2000)
-                if el:
-                    text = el.inner_text().strip() if el.inner_text() else ""
-                    # 有实际用户名内容才算登录
-                    if len(text) > 0:
-                        return True
-            except:
-                continue
-        return False
-    except:
-        return False
 
 def login():
     """打开登录页，用户扫码后保存 cookies（sync API）"""
@@ -67,6 +54,7 @@ def login():
         fingerprint=fp,
         window_size=(1280, 720),
         i_know_what_im_doing=True,
+        exclude_addons=[DefaultAddons.UBO],
     )
     opts.update({
         "persistent_context": True,

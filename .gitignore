@@ -1,5 +1,6 @@
 # 运行报告（含简历摘要，勿入库）
 reports/*.txt
+reports/followup_state.json
 
 # Camoufox / Firefox 持久化配置目录（缓存、cookie、storage，体积大且机绑）
 recruit_profile/
