@@ -95,6 +95,7 @@ python scripts/greet.py --no-report
 - 匹配则按间隔打招呼；脚本会在 **iframe 推荐列表内滚动**、拉末卡入屏以尝试加载更多，直到凑满 `top` 或连续若干次滚动后卡片数仍不增加（`BOSS_GREET_LIST_SCROLL_STALL`，默认 5）
 - 每条判定写入 **`reports/greet_rule_report_run序号_YYYYMMDD_HHMMSS.txt`**（UTF-8）；文首/文末含 **报告日期** 与 **第 N 次运行**（序号在 `reports/greet_run_index.json`）
 - 审计 JSONL 仍为根目录 `llm_audit_log.jsonl`
+- **风控节奏（默认偏保守）**：`BOSS_GREET_SAFE_PACE=1`（默认）拉长匹配后等待、卡片间隔与列表滚动停顿，并对间隔加随机抖动 `BOSS_GREET_JITTER_RATIO`；封禁恢复期可再降低 `BOSS_GREET_TOP`。设为 `BOSS_GREET_SAFE_PACE=0` 可略加快（更易触发风控）。可调：`GREET_AFTER_MATCH_WAIT_MIN`/`MAX`、`GREET_COOLDOWN_BETWEEN_CARDS_SEC`、`GREET_COOLDOWN_AFTER_SUCCESS_SEC`、`POST_CARD_CLICK_PAUSE_SEC`、`GREET_LIST_SCROLL_PAUSE_SEC`。
 
 ### 步骤4：沟通列表「继续沟通」智能跟进（发消息后）
 

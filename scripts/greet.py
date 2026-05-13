@@ -3,6 +3,11 @@ Boss Recruit - 打招呼前简历筛选
 核心功能：卡片硬门槛 + 侧栏经历概览规则匹配（无 LLM），匹配才打招呼。
 
 使用 persistent_context + 固定 seed 实现扫码一次永久免登。
+
+风控相关（网页封禁多由「短时间大量自动化行为」触发，非单点代码能完全避免）：
+- 默认开启安全节奏：`BOSS_GREET_SAFE_PACE=1`（可设 `0` 恢复更快但更激进）
+- 匹配后等待、卡片间隔、成功招呼后额外冷却均带随机抖动：`BOSS_GREET_JITTER_RATIO`
+- 单日招呼请勿超过平台习惯与团队文档建议；封禁后应降低 `BOSS_GREET_TOP`、拉长间隔或暂停脚本
 """
 
 import json
@@ -32,6 +37,30 @@ REPORTS_DIR = SCRIPT_DIR / "reports"
 GREET_RUN_INDEX_FILE = REPORTS_DIR / "greet_run_index.json"
 
 DEFAULT_GREET_TOP_CAP = 20
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    v = os.environ.get(key, "").strip().lower()
+    if not v:
+        return default
+    return v in ("1", "true", "yes", "on")
+
+
+# 默认开启：拉长间隔 + 抖动，降低「固定周期点击」特征（封禁后务必保持 1）
+BOSS_GREET_SAFE_PACE = _env_bool("BOSS_GREET_SAFE_PACE", True)
+
+
+def human_pause_seconds(base: float, *, ratio: Optional[float] = None) -> float:
+    """在 base 附近随机取时长，避免完全等间隔的机器人节奏。"""
+    r = ratio if ratio is not None else float(os.environ.get("BOSS_GREET_JITTER_RATIO", "0.24"))
+    r = max(0.0, min(r, 0.5))
+    lo = base * (1.0 - r)
+    hi = base * (1.0 + r)
+    return random.uniform(lo, hi)
+
+
+def human_sleep(base: float, *, ratio: Optional[float] = None) -> None:
+    time.sleep(human_pause_seconds(base, ratio=ratio))
 
 
 def resolve_greet_top(cli_top: Optional[int]) -> Optional[int]:
@@ -461,11 +490,56 @@ def resume_text_sufficient_for_llm(text: str):
 # 右侧简历抽屉延迟加载：轮询超时（秒）
 RESUME_PANEL_POLL_TIMEOUT_SEC = float(os.environ.get("RESUME_PANEL_POLL_TIMEOUT_SEC", "28"))
 
-# 点击卡片后先短暂停顿，再给侧栏请求留出时间
-POST_CARD_CLICK_PAUSE_SEC = float(os.environ.get("POST_CARD_CLICK_PAUSE_SEC", "0.8"))
+# 点击卡片后停顿：显式环境变量优先；否则安全模式更慢（利于侧栏与接口就绪）
+_raw_post = os.environ.get("POST_CARD_CLICK_PAUSE_SEC", "").strip()
+POST_CARD_CLICK_PAUSE_SEC = (
+    float(_raw_post) if _raw_post else (1.65 if BOSS_GREET_SAFE_PACE else 0.9)
+)
 
-# 规则匹配通过后等待多久再点「打招呼」（秒）
-GREET_AFTER_MATCH_WAIT_SEC = float(os.environ.get("GREET_AFTER_MATCH_WAIT_SEC", "30"))
+
+def sleep_after_match_before_greet() -> None:
+    """匹配后再点打招呼前的等待（随机区间，弱化固定周期）。"""
+    rmin = os.environ.get("GREET_AFTER_MATCH_WAIT_MIN", "").strip()
+    rmax = os.environ.get("GREET_AFTER_MATCH_WAIT_MAX", "").strip()
+    if rmin and rmax:
+        lo, hi = float(rmin), float(rmax)
+    elif os.environ.get("GREET_AFTER_MATCH_WAIT_SEC", "").strip():
+        base = float(os.environ["GREET_AFTER_MATCH_WAIT_SEC"])
+        lo, hi = base * 0.88, base * 1.42
+    else:
+        if BOSS_GREET_SAFE_PACE:
+            lo, hi = 45.0, 88.0
+        else:
+            lo, hi = 24.0, 40.0
+    if lo > hi:
+        lo, hi = hi, lo
+    t = random.uniform(lo, hi)
+    print(f"    [PACE] 匹配后随机等待 {t:.1f}s 再点打招呼（区间约 {lo:.0f}–{hi:.0f}s）")
+    time.sleep(t)
+
+
+def sleep_between_cards(*, after_successful_greet: bool) -> None:
+    """每张卡片处理完后的冷却；成功招呼后额外加长。"""
+    raw_base = os.environ.get("GREET_COOLDOWN_BETWEEN_CARDS_SEC", "").strip()
+    raw_extra = os.environ.get("GREET_COOLDOWN_AFTER_SUCCESS_SEC", "").strip()
+    if raw_base:
+        base = float(raw_base)
+    else:
+        base = 11.0 if BOSS_GREET_SAFE_PACE else 5.5
+    if raw_extra:
+        extra = float(raw_extra)
+    else:
+        extra = 14.0 if BOSS_GREET_SAFE_PACE else 5.0
+    if after_successful_greet:
+        human_sleep(base + extra)
+    else:
+        human_sleep(base)
+
+
+def sleep_after_escape_between_cards() -> None:
+    raw = os.environ.get("GREET_AFTER_ESCAPE_SEC", "").strip()
+    base = float(raw) if raw else (3.6 if BOSS_GREET_SAFE_PACE else 2.0)
+    human_sleep(base)
 
 # 推荐牛人列表顶部「筛选」面板（环境变量可覆盖，逗号分隔）
 BOSS_FILTER_DEGREE_TAGS = [
@@ -892,10 +966,12 @@ def scroll_recommend_list(frame, page) -> None:
     except Exception:
         pass
     try:
-        page.mouse.wheel(0, 800)
+        page.mouse.wheel(0, 480 if BOSS_GREET_SAFE_PACE else 800)
     except Exception:
         pass
-    time.sleep(1.45)
+    _raw_sp = os.environ.get("GREET_LIST_SCROLL_PAUSE_SEC", "").strip()
+    _sp_base = float(_raw_sp) if _raw_sp else (2.35 if BOSS_GREET_SAFE_PACE else 1.45)
+    human_sleep(_sp_base)
 
 
 def expand_resume_sections(frame):
@@ -903,16 +979,19 @@ def expand_resume_sections(frame):
     if frame is None:
         return
     clicked = 0
+    _row_pause = 0.52 if BOSS_GREET_SAFE_PACE else 0.16
+    _expand_pause = 0.48 if BOSS_GREET_SAFE_PACE else 0.32
+    _max_rows = 10 if BOSS_GREET_SAFE_PACE else 15
     # Boss 推荐牛人右侧「经历概览」：.resume-summary > ul.jobs > li，日期可能在折叠子节点内
     try:
         job_rows = frame.locator(".resume-summary ul.jobs:not(.education) > li")
-        for i in range(min(job_rows.count(), 15)):
+        for i in range(min(job_rows.count(), _max_rows)):
             try:
                 row = job_rows.nth(i)
                 if row.is_visible(timeout=400):
                     row.click(timeout=1500)
                     clicked += 1
-                    time.sleep(0.15)
+                    human_sleep(_row_pause)
             except Exception:
                 continue
     except Exception:
@@ -924,7 +1003,7 @@ def expand_resume_sections(frame):
                 break
             btn.click(timeout=2500)
             clicked += 1
-            time.sleep(0.35)
+            human_sleep(_expand_pause)
         except Exception:
             break
     for label in ("查看更多", "查看全部"):
@@ -933,7 +1012,7 @@ def expand_resume_sections(frame):
             if btn.is_visible(timeout=400):
                 btn.click(timeout=2500)
                 clicked += 1
-                time.sleep(0.35)
+                human_sleep(_expand_pause)
         except Exception:
             pass
     if clicked:
@@ -964,8 +1043,9 @@ def _greet_feedback_visible(frame, page) -> bool:
 def _click_visible_greet_in_sidebar_js(frame):
     """
     只在当前展开的 .resume-right-side 内找可见的打招呼按钮，跳过「继续沟通」与隐藏副本。
+    安全模式下仅用单次 DOM click，减少合成 mousedown/up 序列（更像真实点击路径）。
     """
-    js = r"""() => {
+    js_heavy = r"""() => {
         const roots = [
             document.querySelector('.resume-right-side'),
             document.querySelector('.resume-simple-box'),
@@ -998,13 +1078,44 @@ def _click_visible_greet_in_sidebar_js(frame):
         }
         return '';
     }"""
+    js_light = r"""() => {
+        const roots = [
+            document.querySelector('.resume-right-side'),
+            document.querySelector('.resume-simple-box'),
+            document.querySelector('.dialog-footer'),
+            document.body
+        ].filter(Boolean);
+        const candidates = [];
+        const seen = new Set();
+        for (const root of roots) {
+            root.querySelectorAll('button.btn-greet').forEach(b => {
+                if (!seen.has(b)) { seen.add(b); candidates.push(b); }
+            });
+        }
+        const visibleOk = (b) => {
+            if (!b || !b.offsetParent) return false;
+            const t = (b.innerText || '').trim();
+            if (t.includes('继续沟通')) return false;
+            if (t.length > 0 && !t.includes('打招呼')) return false;
+            const r = b.getBoundingClientRect();
+            return r.width >= 20 && r.height >= 16 &&
+                r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+        };
+        for (const b of candidates) {
+            if (!visibleOk(b)) continue;
+            b.click();
+            return (b.innerText || '').trim() || 'btn-greet';
+        }
+        return '';
+    }"""
+    js = js_light if BOSS_GREET_SAFE_PACE else js_heavy
     try:
         return frame.locator("body").first.evaluate(js)
     except Exception:
         return ""
 
 
-def _click_scoped_greet_playwright(frame) -> str:
+def _click_scoped_greet_playwright(frame, *, force: bool = False) -> str:
     """从侧栏相关容器由后往前找第一个可见的打招呼按钮（避开列表里靠前的隐藏副本）。"""
     scoped_selectors = [
         ".resume-right-side button.btn-greet",
@@ -1029,11 +1140,17 @@ def _click_scoped_greet_playwright(frame) -> str:
                 if txt.strip() and "打招呼" not in txt:
                     continue
                 loc.scroll_into_view_if_needed(timeout=5000)
-                time.sleep(0.25)
+                human_sleep(0.35 if BOSS_GREET_SAFE_PACE else 0.22)
                 try:
-                    loc.click(timeout=15000, force=True)
+                    loc.click(timeout=15000, force=force)
                 except Exception:
-                    loc.evaluate("el => el.click()")
+                    if not force:
+                        try:
+                            loc.click(timeout=15000, force=True)
+                        except Exception:
+                            loc.evaluate("el => el.click()")
+                    else:
+                        loc.evaluate("el => el.click()")
                 return sel
         except Exception:
             continue
@@ -1044,32 +1161,38 @@ def click_greet_button_and_dismiss_modal(frame, page):
     """
     右侧栏打招呼为 <button class="... btn-greet">；点击后弹窗点「知道了」。
     列表里常有多个隐藏卡片上的 .btn-greet，禁止仅用 .first，必须在可见侧栏内点击。
+    安全模式：先 Playwright 常规点击，再 JS/force，降低「一上来就 force」的风控特征。
     """
-    max_attempts = 3
+    human_sleep(0.55 + random.random() * 0.95)
+    max_attempts = 4 if BOSS_GREET_SAFE_PACE else 3
     hit = False
     for attempt in range(max_attempts):
-        hit_hint = _click_visible_greet_in_sidebar_js(frame)
+        hit_hint = ""
+        if BOSS_GREET_SAFE_PACE:
+            hit_hint = _click_scoped_greet_playwright(frame, force=False)
         if not hit_hint:
-            hit_hint = _click_scoped_greet_playwright(frame)
+            hit_hint = _click_visible_greet_in_sidebar_js(frame)
+        if not hit_hint:
+            hit_hint = _click_scoped_greet_playwright(frame, force=True)
         if hit_hint:
             print(f"    [OK] 已触发打招呼点击 ({hit_hint}, 第{attempt + 1}次)")
             hit = True
         else:
             print(f"    [WARN] 未命中可见打招呼按钮，重试 {attempt + 1}/{max_attempts}")
-            time.sleep(1.0)
+            human_sleep(1.85 if BOSS_GREET_SAFE_PACE else 1.0)
             continue
 
-        time.sleep(0.8)
+        human_sleep(1.05 if BOSS_GREET_SAFE_PACE else 0.78)
         if _greet_feedback_visible(frame, page):
             break
         print(f"    [WARN] 未检测到招呼弹窗，可能点到隐藏按钮，重试 {attempt + 1}/{max_attempts}")
-        time.sleep(1.2)
+        human_sleep(1.75 if BOSS_GREET_SAFE_PACE else 1.2)
 
     if not hit:
         raise RuntimeError("未找到当前侧栏可见的打招呼按钮")
 
     if not _greet_feedback_visible(frame, page):
-        time.sleep(2.0)
+        human_sleep(2.35 if BOSS_GREET_SAFE_PACE else 2.0)
     if not _greet_feedback_visible(frame, page):
         raise RuntimeError("打招呼后未出现「已向牛人发送招呼」等弹层，可能未真正发出")
 
@@ -1088,12 +1211,15 @@ def click_greet_button_and_dismiss_modal(frame, page):
                     kb = ctx.locator(ks).first
                     if kb.is_visible(timeout=600):
                         try:
-                            kb.click(timeout=12000, force=True)
+                            kb.click(timeout=12000, force=not BOSS_GREET_SAFE_PACE)
                         except Exception:
-                            kb.evaluate("el => el.click()")
+                            try:
+                                kb.click(timeout=12000, force=True)
+                            except Exception:
+                                kb.evaluate("el => el.click()")
                         print(f"    [OK] 已关闭招呼弹窗：知道了 ({ctx_name})")
                         dismissed = True
-                        time.sleep(0.7)
+                        human_sleep(0.9 if BOSS_GREET_SAFE_PACE else 0.65)
                         break
                 except Exception:
                     continue
@@ -1101,14 +1227,14 @@ def click_greet_button_and_dismiss_modal(frame, page):
                 break
         if dismissed:
             break
-        time.sleep(0.35)
+        human_sleep(0.32)
 
     if not dismissed:
         print("    [WARN] 未点到「知道了」，请手动关闭弹窗；将继续下一张卡片")
 
     try:
         page.keyboard.press("Escape")
-        time.sleep(0.4)
+        human_sleep(0.55 if BOSS_GREET_SAFE_PACE else 0.38)
         page.keyboard.press("Escape")
     except Exception:
         pass
@@ -1909,6 +2035,14 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
         f"max_gap_months={RULE_MAX_GAP_MONTHS}, "
         f"本轮成功打招呼上限（凑满即停）top={_top_phrase(top)}"
     )
+    print(
+        f"[CONFIG] 风控节奏: BOSS_GREET_SAFE_PACE={'1' if BOSS_GREET_SAFE_PACE else '0'} "
+        f"（1=默认较慢+随机抖动；恢复后可设 BOSS_GREET_SAFE_PACE=0 略加快）"
+    )
+    print(
+        "[HINT] 网页端 24h 限制通常与「同账号短时间大量操作、多设备/自动化指纹」等综合相关；"
+        "脚本无法保证不触发风控，建议降低 BOSS_GREET_TOP、勿同日多开脚本、遇验证码立即停。"
+    )
 
     # 预生成固定指纹
     random.seed(FIXED_SEED)
@@ -2053,6 +2187,7 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                 break
 
             try:
+                _greet_count_before_card = greet_count
                 # 在 iframe 内获取牛人卡片
                 cards = frame.locator(".card-inner")
                 card_count = cards.count()
@@ -2123,7 +2258,7 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                     append_rule_report(name, card_text, "", r, tag="卡片硬过滤")
                     mark_candidate_seen(name)
                     card_index += 1
-                    time.sleep(5)
+                    human_sleep(7.2 if BOSS_GREET_SAFE_PACE else 4.8)
                     continue
 
                 # 点击卡片打开简历（Boss 中间区域常为 canvas#resume，DOM 无正文，依赖 wapi + 卡片摘要）
@@ -2136,7 +2271,7 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                         "    [INFO] Card clicked, polling resume panel "
                         f"(timeout={RESUME_PANEL_POLL_TIMEOUT_SEC}s)..."
                     )
-                    time.sleep(POST_CARD_CLICK_PAUSE_SEC)
+                    human_sleep(POST_CARD_CLICK_PAUSE_SEC)
                 except Exception as e:
                     print(f"    [WARN] Card click failed: {e}")
                     wapi_sniffer.stop()
@@ -2148,7 +2283,7 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                 try:
                     resume_text = poll_resume_after_card_click(frame, page, min_chars=40)
                     expand_resume_sections(frame)
-                    time.sleep(0.85)
+                    human_sleep(1.05 if BOSS_GREET_SAFE_PACE else 0.85)
                     resume_text = max(
                         resume_text,
                         collect_online_resume_text(frame, page),
@@ -2197,9 +2332,9 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                         report_stats["rule_match"] += 1
                         print(
                             f"    [RESULT] 是 - 匹配(score={result.get('score')}) - "
-                            f"等待{GREET_AFTER_MATCH_WAIT_SEC:.0f}秒后点击打招呼"
+                            "即将随机等待后点击打招呼（见 [PACE]）"
                         )
-                        time.sleep(GREET_AFTER_MATCH_WAIT_SEC)
+                        sleep_after_match_before_greet()
                         try:
                             click_greet_button_and_dismiss_modal(frame, page)
                             greeted.append(
@@ -2228,19 +2363,23 @@ def greet(talent_names=None, top=None, write_report=True, argv_summary=""):
                     append_rule_report(name, card_text, "", nr, tag="无侧栏文本")
                     mark_candidate_seen(name)
 
-                # 每张卡片处理完等5秒防风控
-                print("    [INFO] Waiting 5s before next card...")
-                time.sleep(5)
+                after_ok = greet_count > _greet_count_before_card
+                print(
+                    "    [INFO] 卡片间冷却（"
+                    + ("含成功招呼后加长间隔" if after_ok else "常规")
+                    + "）…"
+                )
+                sleep_between_cards(after_successful_greet=after_ok)
 
                 # 关闭简历弹窗
                 try:
                     page.keyboard.press("Escape")
-                    time.sleep(2)
-                except:
+                    sleep_after_escape_between_cards()
+                except Exception:
                     pass
 
                 card_index += 1
-                time.sleep(2)
+                human_sleep(1.35 if BOSS_GREET_SAFE_PACE else 0.95)
 
             except Exception as e:
                 print(f"    [WARN] Loop error: {e}")
