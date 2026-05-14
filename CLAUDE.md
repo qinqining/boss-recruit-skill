@@ -108,6 +108,7 @@ Agent 分析候选人回复，决定：
 | 素质表（Markdown） | `面试方案生成任务/岗位素质项/01_岗位与JD门槛.md`、`02_素质分档与面试母题.md` |
 | 候选人材料 | `面试方案生成任务/候选人简历/`；**PDF 先** `py scripts/pdf_resume_to_md.py …pdf` **转 `.md` 再分析**（`pip install pymupdf`）；扫描件 OCR |
 | 产出 | `面试方案生成任务/输出/`：**必须**含带日期的 **`面试方案_*.docx`**（Word）；可先写 `.md` 再 `py scripts/interview_plan_md_to_docx.py <路径>.md`（`pip install python-docx`） |
+| 定稿后归档 | 用户**明确确认**方案后，将该候选人在 `候选人简历/` 下的简历文件 **移动** 到 `面试方案生成任务/已处理简历/`（见 `面试方案生成任务/任务.md`「用户确认后」） |
 
 ## 频率限制
 
